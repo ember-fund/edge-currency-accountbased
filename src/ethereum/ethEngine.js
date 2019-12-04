@@ -295,8 +295,8 @@ export class EthereumEngine extends CurrencyEngine {
     await this.startEngine()
   }
 
-  async makeSpend(edgeSpendInfoIn: EdgeSpendInfo) {
-    const { edgeSpendInfo, currencyCode } = super.makeSpend(edgeSpendInfoIn)
+  async makeSpend (edgeSpendInfoIn: EdgeSpendInfo) {
+    const { edgeSpendInfo, currencyCode, otherParams = {} } = super.makeSpend(edgeSpendInfoIn)
 
     // Ethereum can only have one output
     if (edgeSpendInfo.spendTargets.length !== 1) {
@@ -311,8 +311,6 @@ export class EthereumEngine extends CurrencyEngine {
 
     const data =
       spendTarget.otherParams != null ? spendTarget.otherParams.data : undefined
-
-    let otherParams: Object = {}
 
     const miningFees = calcMiningFee(
       edgeSpendInfo,
@@ -342,6 +340,7 @@ export class EthereumEngine extends CurrencyEngine {
       }
     }
 
+    let otherParamsOut: Object = {}
     if (currencyCode === PRIMARY_CURRENCY) {
       const ethParams: EthereumTxOtherParams = {
         from: [this.walletLocalData.publicKey],
@@ -354,7 +353,7 @@ export class EthereumEngine extends CurrencyEngine {
         tokenRecipientAddress: null,
         data: data
       }
-      otherParams = ethParams
+      otherParamsOut = { ...otherParams, ...ethParams }
     } else {
       let contractAddress = ''
       if (data) {
@@ -381,7 +380,7 @@ export class EthereumEngine extends CurrencyEngine {
         tokenRecipientAddress: publicAddress,
         data: data
       }
-      otherParams = ethParams
+      otherParamsOut = { ...otherParams, ...ethParams }
     }
 
     const balanceEth = this.walletLocalData.totalBalances[
@@ -392,20 +391,22 @@ export class EthereumEngine extends CurrencyEngine {
     let totalTxAmount = '0'
     let parentNetworkFee = null
 
+    const byPassBalanceCheck = otherParams && otherParams.txOptions ? otherParams.txOptions.byPassBalanceCheck : false
+    debugger
     if (currencyCode === PRIMARY_CURRENCY) {
       totalTxAmount = bns.add(nativeNetworkFee, nativeAmount)
-      if (bns.gt(totalTxAmount, balanceEth)) {
+      if (bns.gt(totalTxAmount, balanceEth) && !byPassBalanceCheck) {
         throw new InsufficientFundsError()
       }
       nativeAmount = bns.mul(totalTxAmount, '-1')
     } else {
       parentNetworkFee = nativeNetworkFee
 
-      if (bns.gt(nativeNetworkFee, balanceEth)) {
+      if (bns.gt(nativeNetworkFee, balanceEth) && !byPassBalanceCheck) {
         throw new InsufficientFundsError('Insufficient ETH for transaction fee')
       }
       const balanceToken = this.walletLocalData.totalBalances[currencyCode]
-      if (bns.gt(nativeAmount, balanceToken)) {
+      if (bns.gt(nativeAmount, balanceToken) && !byPassBalanceCheck) {
         throw new InsufficientFundsError()
       }
       nativeNetworkFee = '0' // Do not show a fee for token transactions.
@@ -423,7 +424,7 @@ export class EthereumEngine extends CurrencyEngine {
       networkFee: nativeNetworkFee, // networkFee
       ourReceiveAddresses: [], // ourReceiveAddresses
       signedTx: '', // signedTx
-      otherParams // otherParams
+      otherParams: otherParamsOut // otherParams
     }
 
     if (parentNetworkFee) {
