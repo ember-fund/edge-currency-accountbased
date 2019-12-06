@@ -916,7 +916,9 @@ class CurrencyEngine {
       throw new Error('InternalErrorInvalidCurrencyCode')
     }
 
-    return { edgeSpendInfo, nativeBalance, currencyCode, denom }
+    const otherParams = edgeSpendInfo.otherParams ? edgeSpendInfo.otherParams : null
+
+    return { edgeSpendInfo, nativeBalance, currencyCode, denom, otherParams }
   }
 
   // called by GUI after sliding to confirm
