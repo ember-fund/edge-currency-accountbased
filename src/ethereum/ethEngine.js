@@ -904,7 +904,7 @@ export class EthereumEngine extends CurrencyEngine {
     let parentNetworkFee = null
 
     const byPassBalanceCheck = otherParams && otherParams.txOptions ? otherParams.txOptions.byPassBalanceCheck : false
-    debugger
+
     if (currencyCode === PRIMARY_CURRENCY) {
       totalTxAmount = bns.add(nativeNetworkFee, nativeAmount)
       if (bns.gt(totalTxAmount, balanceEth) && !byPassBalanceCheck) {
