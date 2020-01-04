@@ -24,6 +24,8 @@ export type TransactionList = { [currencyCode: string]: Array<EdgeTransaction> }
 export class WalletLocalData {
   blockHeight: number
   lastAddressQueryHeight: number
+  lastTransactionQueryHeight: { [currencyCode: string]: number }
+  lastTransactionDate: { [currencyCode: string]: number }
   publicKey: string
   totalBalances: { [currencyCode: string]: string }
   enabledTokens: Array<string>
@@ -31,11 +33,13 @@ export class WalletLocalData {
   numUnconfirmedSpendTxs: number
   otherData: Object
 
-  constructor (jsonString: string | null, primaryCurrency: string) {
+  constructor(jsonString: string | null, primaryCurrency: string) {
     this.blockHeight = 0
     const totalBalances: { [currencyCode: string]: string } = {}
     this.totalBalances = totalBalances
     this.lastAddressQueryHeight = 0
+    this.lastTransactionQueryHeight = {}
+    this.lastTransactionDate = {}
     this.lastCheckedTxsDropped = 0
     this.numUnconfirmedSpendTxs = 0
     this.otherData = {}
@@ -62,8 +66,15 @@ export class WalletLocalData {
       }
       if (typeof data.enabledTokens !== 'undefined') {
         this.enabledTokens = data.enabledTokens
+        if (!this.enabledTokens.includes(primaryCurrency)) {
+          this.enabledTokens.push(primaryCurrency)
+        }
       }
       if (typeof data.otherData !== 'undefined') this.otherData = data.otherData
+      if (typeof data.lastTransactionQueryHeight === 'object')
+        this.lastTransactionQueryHeight = data.lastTransactionQueryHeight
+      if (typeof data.lastTransactionDate === 'object')
+        this.lastTransactionDate = data.lastTransactionDate
     }
   }
 }

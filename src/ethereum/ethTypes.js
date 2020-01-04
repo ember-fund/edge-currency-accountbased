@@ -5,8 +5,11 @@
 
 export type EthereumInitOptions = {
   blockcypherApiKey?: string,
-  etherscanApiKey?: string,
-  infuraProjectId?: string
+  etherscanApiKey?: string | Array<string>,
+  infuraProjectId?: string,
+  blockchairApiKey?: string,
+  alethioApiKey?: string,
+  amberdataApiKey?: string
 }
 
 export type EthereumSettings = {
@@ -45,7 +48,8 @@ export type EthereumFees = {
 
 export type EthereumCalcedFees = {
   gasPrice: string,
-  gasLimit: string
+  gasLimit: string,
+  useDefaults: boolean
 }
 
 export type EtherscanTransaction = {
@@ -75,7 +79,7 @@ export type EthereumTxOtherParams = {
   gas: string,
   gasPrice: string,
   gasUsed: string,
-  cumulativeGasUsed: string,
+  cumulativeGasUsed?: string,
   errorVal: number,
   tokenRecipientAddress: string | null,
   data?: string | null
@@ -85,4 +89,44 @@ export type EthereumWalletOtherData = {
   nextNonce: string,
   unconfirmedNextNonce: string,
   networkFees: EthereumFees
+}
+
+export type AlethioTokenTransferAttributes = {
+  blockCreationTime: number,
+  symbol: string,
+  fee: string,
+  value: string,
+  globalRank: Array<number>
+}
+
+export type AlethioTransactionDataObj = {
+  data: { id: string },
+  links: { related: string }
+}
+
+export type AlethioTransactionRelationships = {
+  from: AlethioTransactionDataObj,
+  to: AlethioTransactionDataObj,
+  transaction: AlethioTransactionDataObj,
+  token: AlethioTransactionDataObj
+}
+
+export type AlethioTokenTransfer = {
+  type: string,
+  attributes: AlethioTokenTransferAttributes,
+  relationships: AlethioTransactionRelationships
+}
+
+export type AmberdataTx = {
+  hash: string,
+  timestamp: string,
+  blockNumber: string,
+  value: string,
+  fee: string,
+  gasLimit: string,
+  gasPrice: string,
+  gasUsed: string,
+  cumulativeGasUsed: string,
+  from: Array<{ address: string }>,
+  to: Array<{ address: string }>
 }

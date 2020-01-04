@@ -70,7 +70,7 @@ class CurrencyEngine {
   io: EdgeIo
   otherData: Object
 
-  constructor (
+  constructor(
     currencyPlugin: CurrencyPlugin,
     walletInfo: EdgeWalletInfo,
     opts: EdgeCurrencyEngineOptions
@@ -115,13 +115,11 @@ class CurrencyEngine {
       this.walletInfo.keys.publicKey = walletInfo.keys.publicKey
     }
     this.log(
-      `Created Wallet Type ${this.walletInfo.type} for Currency Plugin ${
-        this.currencyInfo.pluginName
-      }`
+      `Created Wallet Type ${this.walletInfo.type} for Currency Plugin ${this.currencyInfo.pluginName}`
     )
   }
 
-  isSpendTx (edgeTransaction: EdgeTransaction): boolean {
+  isSpendTx(edgeTransaction: EdgeTransaction): boolean {
     if (edgeTransaction.nativeAmount) {
       if (edgeTransaction.nativeAmount.slice(0, 1) === '-') {
         return true
@@ -144,7 +142,7 @@ class CurrencyEngine {
     return out
   }
 
-  async loadTransactions () {
+  async loadTransactions() {
     if (this.transactionsLoaded) {
       console.log('Transactions already loaded')
       return
@@ -181,12 +179,10 @@ class CurrencyEngine {
     }
 
     let isEmptyTransactions = true
-    for (const cc in this.transactionList) {
-      if (this.transactionList.hasOwnProperty(cc)) {
-        if (this.transactionList[cc] && this.transactionList[cc].length > 0) {
-          isEmptyTransactions = false
-          break
-        }
+    for (const cc of Object.keys(this.transactionList)) {
+      if (this.transactionList[cc] && this.transactionList[cc].length > 0) {
+        isEmptyTransactions = false
+        break
       }
     }
     if (isEmptyTransactions) {
@@ -194,19 +190,17 @@ class CurrencyEngine {
       this.transactionList = transactionList || this.transactionList
       this.txIdList = txIdList || this.txIdList
       this.txIdMap = txIdMap || this.txIdMap
-    } else {
+    } else if (transactionList != null) {
       // Manually add transactions via addTransaction()
-      for (const cc in transactionList) {
-        if (transactionList.hasOwnProperty(cc)) {
-          for (const edgeTransaction of transactionList[cc]) {
-            this.addTransaction(cc, edgeTransaction)
-          }
+      for (const cc of Object.keys(transactionList)) {
+        for (const edgeTransaction of transactionList[cc]) {
+          this.addTransaction(cc, edgeTransaction)
         }
       }
     }
   }
 
-  async loadEngine (
+  async loadEngine(
     plugin: EdgeCurrencyTools,
     walletInfo: EdgeWalletInfo,
     opts: EdgeCurrencyEngineOptions
@@ -247,10 +241,19 @@ class CurrencyEngine {
       this.tokenCheckBalanceStatus[token] = 0
       this.tokenCheckTransactionsStatus[token] = 0
     }
+
+    // Initialize walletLocalData.lastTransactionQueryHeight for
+    //  backwards-compatibility
+    if (!this.walletLocalData.lastTransactionQueryHeight) {
+      for (const token of this.walletLocalData.enabledTokens) {
+        this.walletLocalData.lastTransactionQueryHeight[token] =
+          this.walletLocalData.lastAddressQueryHeight || 0
+      }
+    }
     this.doInitialBalanceCallback()
   }
 
-  findTransaction (currencyCode: string, txid: string) {
+  findTransaction(currencyCode: string, txid: string) {
     if (this.txIdMap[currencyCode]) {
       const index = this.txIdMap[currencyCode][txid]
       if (typeof index === 'number') {
@@ -260,12 +263,12 @@ class CurrencyEngine {
     return -1
   }
 
-  sortTxByDate (a: EdgeTransaction, b: EdgeTransaction) {
+  sortTxByDate(a: EdgeTransaction, b: EdgeTransaction) {
     return b.date - a.date
   }
 
   // Add or update tx in transactionList
-  addTransaction (
+  addTransaction(
     currencyCode: string,
     edgeTransaction: EdgeTransaction,
     lastSeenTime?: number
@@ -327,6 +330,8 @@ class CurrencyEngine {
       const transactionsArray = this.transactionList[currencyCode]
       const edgeTx = transactionsArray[idx]
 
+      const { otherParams: otherParamsOld = {} } = edgeTx
+      const { otherParams: otherParamsNew = {} } = edgeTransaction
       if (
         // if something in the transaction has changed?
         edgeTx.blockHeight < edgeTransaction.blockHeight ||
@@ -334,8 +339,7 @@ class CurrencyEngine {
         (edgeTx.blockHeight === edgeTransaction.blockHeight &&
           (edgeTx.networkFee !== edgeTransaction.networkFee ||
             edgeTx.nativeAmount !== edgeTransaction.nativeAmount ||
-            edgeTx.otherParams.lastSeenTime !==
-              edgeTransaction.otherParams.lastSeenTime ||
+            otherParamsOld.lastSeenTime !== otherParamsNew.lastSeenTime ||
             edgeTx.date !== edgeTransaction.date))
       ) {
         // If a spend transaction goes from unconfirmed to dropped or confirmed,
@@ -352,9 +356,7 @@ class CurrencyEngine {
           needsReSort = true
         }
         this.log(
-          `Update transaction: ${edgeTransaction.txid} height:${
-            edgeTransaction.blockHeight
-          }`
+          `Update transaction: ${edgeTransaction.txid} height:${edgeTransaction.blockHeight}`
         )
         this.updateTransaction(currencyCode, edgeTransaction, idx)
       } else {
@@ -366,7 +368,7 @@ class CurrencyEngine {
     }
   }
 
-  sortTransactions (currencyCode: string) {
+  sortTransactions(currencyCode: string) {
     // Sort
     this.transactionList[currencyCode].sort(this.sortTxByDate)
     // Add to txidMap
@@ -383,7 +385,7 @@ class CurrencyEngine {
     this.txIdList[currencyCode] = txIdList
   }
 
-  checkDroppedTransactionsThrottled () {
+  checkDroppedTransactionsThrottled() {
     const now = Date.now() / 1000
     if (
       now - this.walletLocalData.lastCheckedTxsDropped >
@@ -401,14 +403,15 @@ class CurrencyEngine {
     }
   }
 
-  checkDroppedTransactions (dateNow: number) {
+  checkDroppedTransactions(dateNow: number) {
     let numUnconfirmedSpendTxs = 0
     for (const currencyCode in this.transactionList) {
       // const droppedTxIndices: Array<number> = []
       for (let i = 0; i < this.transactionList[currencyCode].length; i++) {
         const tx = this.transactionList[currencyCode][i]
         if (tx.blockHeight === 0) {
-          const lastSeen = tx.otherParams.lastSeenTime
+          const { otherParams = {} } = tx
+          const lastSeen = otherParams.lastSeenTime
           if (dateNow - lastSeen > DROPPED_TX_TIME_GAP) {
             // droppedTxIndices.push(i)
             tx.blockHeight = -1
@@ -434,7 +437,7 @@ class CurrencyEngine {
     this.walletLocalDataDirty = true
   }
 
-  updateTransaction (
+  updateTransaction(
     currencyCode: string,
     edgeTransaction: EdgeTransaction,
     idx: number
@@ -449,7 +452,7 @@ class CurrencyEngine {
   // *************************************
   // Save the wallet data store
   // *************************************
-  async saveWalletLoop () {
+  async saveWalletLoop() {
     const disklet = this.walletLocalDisklet
     const promises = []
     if (this.walletLocalDataDirty) {
@@ -498,7 +501,7 @@ class CurrencyEngine {
     }
   }
 
-  doInitialBalanceCallback () {
+  doInitialBalanceCallback() {
     for (const currencyCode of this.walletLocalData.enabledTokens) {
       try {
         this.currencyEngineCallbacks.onBalanceChanged(
@@ -511,7 +514,7 @@ class CurrencyEngine {
     }
   }
 
-  doInitialTransactionsCallback () {
+  doInitialTransactionsCallback() {
     for (const currencyCode of this.walletLocalData.enabledTokens) {
       try {
         this.currencyEngineCallbacks.onTransactionsChanged(
@@ -522,7 +525,8 @@ class CurrencyEngine {
       }
     }
   }
-  async addToLoop (func: string, timer: number) {
+
+  async addToLoop(func: string, timer: number) {
     try {
       // $FlowFixMe
       await this[func]()
@@ -539,13 +543,13 @@ class CurrencyEngine {
     return true
   }
 
-  getTokenInfo (token: string) {
+  getTokenInfo(token: string) {
     return this.allTokens.find(element => {
       return element.currencyCode === token
     })
   }
 
-  updateOnAddressesChecked () {
+  updateOnAddressesChecked() {
     if (this.addressesChecked) {
       return
     }
@@ -557,7 +561,7 @@ class CurrencyEngine {
     for (const token of activeTokens) {
       const balanceStatus = this.tokenCheckBalanceStatus[token] || 0
       const txStatus = this.tokenCheckTransactionsStatus[token] || 0
-      totalStatus += (balanceStatus + txStatus) / 2 * perTokenSlice
+      totalStatus += ((balanceStatus + txStatus) / 2) * perTokenSlice
       if (balanceStatus === 1 && txStatus === 1) {
         numComplete++
       }
@@ -571,13 +575,13 @@ class CurrencyEngine {
     this.currencyEngineCallbacks.onAddressesChecked(totalStatus)
   }
 
-  log (...text: Array<any>) {
+  log(...text: Array<any>) {
     text[0] = `${this.walletId.slice(0, 5)}: ${text[0].toString()}`
     console.log(...text)
     this.io.console.info(...text)
   }
 
-  async startEngine () {
+  async startEngine() {
     this.addToLoop('saveWalletLoop', SAVE_DATASTORE_MILLISECONDS)
   }
 
@@ -585,7 +589,7 @@ class CurrencyEngine {
   // Public methods
   // *************************************
 
-  async killEngine () {
+  async killEngine() {
     // Set status flag to false
     this.engineOn = false
     // Clear Inner loops timers
@@ -595,11 +599,11 @@ class CurrencyEngine {
     this.timers = {}
   }
 
-  async changeUserSettings (userSettings: Object) {
+  async changeUserSettings(userSettings: Object) {
     this.currentSettings = userSettings
   }
 
-  async clearBlockchainCache (): Promise<void> {
+  async clearBlockchainCache(): Promise<void> {
     const temp = JSON.stringify({
       enabledTokens: this.walletLocalData.enabledTokens,
       publicKey: this.walletLocalData.publicKey
@@ -620,40 +624,51 @@ class CurrencyEngine {
     await this.saveWalletLoop()
   }
 
-  getBlockHeight (): number {
+  getBlockHeight(): number {
     return parseInt(this.walletLocalData.blockHeight)
   }
 
-  enableTokensSync (tokens: Array<string>) {
+  enableTokensSync(tokens: Array<string>) {
     for (const token of tokens) {
       if (this.walletLocalData.enabledTokens.indexOf(token) === -1) {
         this.walletLocalData.enabledTokens.push(token)
+        this.walletLocalDataDirty = true
       }
+    }
+    if (this.walletLocalDataDirty) {
+      this.saveWalletLoop()
     }
   }
 
-  async enableTokens (tokens: Array<string>) {
+  async enableTokens(tokens: Array<string>) {
     this.enableTokensSync(tokens)
   }
 
-  disableTokensSync (tokens: Array<string>) {
+  disableTokensSync(tokens: Array<string>) {
     for (const token of tokens) {
+      if (token === this.currencyInfo.currencyCode) {
+        continue
+      }
       const index = this.walletLocalData.enabledTokens.indexOf(token)
       if (index !== -1) {
         this.walletLocalData.enabledTokens.splice(index, 1)
+        this.walletLocalDataDirty = true
       }
+    }
+    if (this.walletLocalDataDirty) {
+      this.saveWalletLoop()
     }
   }
 
-  async disableTokens (tokens: Array<string>) {
+  async disableTokens(tokens: Array<string>) {
     this.disableTokensSync(tokens)
   }
 
-  async getEnabledTokens (): Promise<Array<string>> {
+  async getEnabledTokens(): Promise<Array<string>> {
     return this.walletLocalData.enabledTokens
   }
 
-  async addCustomToken (obj: any) {
+  async addCustomToken(obj: any) {
     const valid = validateObject(obj, CustomTokenSchema)
 
     if (valid) {
@@ -735,11 +750,11 @@ class CurrencyEngine {
     }
   }
 
-  getTokenStatus (token: string) {
+  getTokenStatus(token: string) {
     return this.walletLocalData.enabledTokens.indexOf(token) !== -1
   }
 
-  getBalance (options: any): string {
+  getBalance(options: any): string {
     let currencyCode = this.currencyInfo.currencyCode
 
     if (typeof options !== 'undefined') {
@@ -765,7 +780,7 @@ class CurrencyEngine {
     }
   }
 
-  getNumTransactions (options: any): number {
+  getNumTransactions(options: any): number {
     let currencyCode = this.currencyInfo.currencyCode
 
     const valid = validateObject(options, {
@@ -786,7 +801,7 @@ class CurrencyEngine {
     }
   }
 
-  async getTransactions (
+  async getTransactions(
     options: EdgeGetTransactionsOptions
   ): Promise<Array<EdgeTransaction>> {
     let currencyCode: string = this.currencyInfo.currencyCode
@@ -844,17 +859,17 @@ class CurrencyEngine {
     return returnArray
   }
 
-  getFreshAddress (options: any): EdgeFreshAddress {
+  getFreshAddress(options: any): EdgeFreshAddress {
     return { publicAddress: this.walletLocalData.publicKey }
   }
 
-  addGapLimitAddresses (addresses: Array<string>, options: any) {}
+  addGapLimitAddresses(addresses: Array<string>, options: any) {}
 
-  isAddressUsed (address: string, options: any) {
+  isAddressUsed(address: string, options: any) {
     return false
   }
 
-  dumpData (): EdgeDataDump {
+  dumpData(): EdgeDataDump {
     const dataDump: EdgeDataDump = {
       walletId: this.walletId.split(' - ')[0],
       walletType: this.walletInfo.type,
@@ -866,7 +881,7 @@ class CurrencyEngine {
     return dataDump
   }
 
-  makeSpend (edgeSpendInfo: EdgeSpendInfo): Object {
+  makeSpend(edgeSpendInfo: EdgeSpendInfo): Object {
     const valid = validateObject(edgeSpendInfo, MakeSpendSchema)
 
     if (!valid) {
@@ -882,8 +897,10 @@ class CurrencyEngine {
     let currencyCode: string = ''
     if (typeof edgeSpendInfo.currencyCode === 'string') {
       currencyCode = edgeSpendInfo.currencyCode
-      if (!this.getTokenStatus(currencyCode)) {
-        throw new Error('Error: Token not supported or enabled')
+      if (currencyCode !== this.currencyInfo.currencyCode) {
+        if (!this.getTokenStatus(currencyCode)) {
+          throw new Error('Error: Token not supported or enabled')
+        }
       }
     } else {
       currencyCode = this.currencyInfo.currencyCode
@@ -910,7 +927,7 @@ class CurrencyEngine {
   }
 
   // called by GUI after sliding to confirm
-  async saveTx (edgeTransaction: EdgeTransaction) {
+  async saveTx(edgeTransaction: EdgeTransaction) {
     // add the transaction to disk and fire off callback (alert in GUI)
     this.addTransaction(edgeTransaction.currencyCode, edgeTransaction)
     this.log(

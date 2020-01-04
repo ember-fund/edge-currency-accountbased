@@ -20,7 +20,11 @@ const otherSettings: EthereumSettings = {
     IND: true,
     USDT: true,
     AGLD: true
-  }
+  },
+  blockchairApiServers: ['https://api.blockchair.com'],
+  alethioApiServers: ['https://api.aleth.io/v1'],
+  amberdataRpcServers: ['https://rpc.web3api.io'],
+  amberdataApiServers: ['https://web3api.io/api/v2']
 }
 
 const defaultSettings: any = {
@@ -78,7 +82,7 @@ export const currencyInfo: EdgeCurrencyInfo = {
           multiplier: '1000000000000000000'
         }
       ],
-      contractAddress: '0x6251583e7d997df3604bc73b9779196e94a090ce',
+      contractAddress: '0x2e91E3e54C5788e9FdD6A181497FDcEa1De1bcc1',
       symbolImage: `${imageServerUrl}/herc-logo-solo-64.png`
     },
     {
@@ -102,8 +106,20 @@ export const currencyInfo: EdgeCurrencyInfo = {
           multiplier: '1000000000000000000'
         }
       ],
-      contractAddress: '0x89d24a6b4ccb1b6faa2625fe562bdd9a23260359',
+      contractAddress: '0x6B175474E89094C44Da98b954EedeAC495271d0F',
       symbolImage: `${imageServerUrl}/dai-logo-solo-64.png`
+    },
+    {
+      currencyCode: 'SAI',
+      currencyName: 'Sai Stablecoin',
+      denominations: [
+        {
+          name: 'SAI',
+          multiplier: '1000000000000000000'
+        }
+      ],
+      contractAddress: '0x89d24a6b4ccb1b6faa2625fe562bdd9a23260359',
+      symbolImage: `${imageServerUrl}/sai-logo-solo-64.png`
     },
     {
       currencyCode: 'WINGS',
@@ -514,6 +530,18 @@ export const currencyInfo: EdgeCurrencyInfo = {
       symbolImage: `${imageServerUrl}/cwbtc-logo-solo-64.png`
     },
     {
+      currencyCode: 'CSAI',
+      currencyName: 'Compound SAI',
+      denominations: [
+        {
+          name: 'CSAI',
+          multiplier: '100000000'
+        }
+      ],
+      contractAddress: '0xf5dce57282a584d2746faf1593d3121fcac444dc',
+      symbolImage: `${imageServerUrl}/csai-logo-solo-64.png`
+    },
+    {
       currencyCode: 'CDAI',
       currencyName: 'Compound DAI',
       denominations: [
@@ -522,7 +550,7 @@ export const currencyInfo: EdgeCurrencyInfo = {
           multiplier: '100000000'
         }
       ],
-      contractAddress: '0xf5dce57282a584d2746faf1593d3121fcac444dc',
+      contractAddress: '0x5d3a536E4D6DbD6114cc1Ead35777bAB948E3643',
       symbolImage: `${imageServerUrl}/cdai-logo-solo-64.png`
     }
   ]

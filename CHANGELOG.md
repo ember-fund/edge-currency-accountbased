@@ -1,5 +1,61 @@
 # edge-currency-accountbased
 
+# 0.6.2 (2020-01-01)
+
+- Upgrade to edge-core-js v0.16.17
+- Upgrade devDependencies
+
+# 0.6.1 (2019-12-31)
+
+- Fix missing parent currency code from enabledTokens
+
+# 0.6.0 (2019-12-18)
+
+- Add Amberdata support
+- RBTC fixes
+- Add 'xrp-ledger:' prefix support
+
+# 0.5.9 (2019-12-06)
+
+- Fix nonce query to save nonce as string.
+- Add try/catch to checkAndUpdate
+- Ensure ETH is checked for balance and txs
+
+# 0.5.8 (2019-12-05)
+
+- Update Tezos explorer and RPC nodes
+- Optimize multiple API support for ETH
+
+# 0.5.7 (2019-12-03)
+
+- Add CDAI
+- Add Alethio API
+
+# 0.5.6 (2019-11-25)
+
+- Add Blockchair API
+- Add support for eth_estimateGas
+
+# 0.5.5 (2019-11-20)
+
+- Refactor ETH for API flexibility (no functional change)
+
+# 0.5.4 (2019-11-07)
+
+- Accept multiple etherscan API keys.
+
+# 0.5.3 (2019-11-04)
+
+- Update usage of EOS API endpoints
+
+# 0.5.2 (2019-10-30)
+
+- Fix Tezos Babylon compatibility.
+
+# 0.5.1 (2019-10-28)
+
+- Update HERC contract address.
+
 # 0.5.0 (2019-10-22)
 
 - Include compound tokens info

@@ -210,3 +210,232 @@ export const CustomTokenSchema = {
   },
   required: ['currencyCode', 'currencyName', 'multiplier', 'contractAddress']
 }
+
+export const BlockChairStatsSchema = {
+  type: 'object',
+  properties: {
+    data: {
+      type: 'object',
+      properties: {
+        blocks: { type: 'number' }
+      }
+    }
+  },
+  required: ['data']
+}
+
+export const AmberdataRpcSchema = {
+  type: 'object',
+  properties: {
+    result: { type: 'string' }
+  },
+  required: ['result']
+}
+
+export const BlockChairAddressSchema = {
+  type: 'object',
+  properties: {
+    data: {
+      type: 'object',
+      additionalProperties: {
+        type: 'object',
+        properties: {
+          address: {
+            type: 'object',
+            properties: {
+              balance: { type: 'string' }
+            },
+            required: ['balance']
+          },
+          layer_2: {
+            type: 'object',
+            properties: {
+              erc_20: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    balance: { type: 'string' },
+                    token_address: { type: 'string' },
+                    token_symbol: { type: 'string' }
+                  },
+                  required: ['balance', 'token_address', 'token_symbol']
+                }
+              }
+            },
+            required: ['erc_20']
+          }
+        },
+        required: ['address', 'layer_2']
+      }
+    }
+  },
+  required: ['data']
+}
+
+export const AlethioAccountsTokenTransferSchema = {
+  type: 'object',
+  properties: {
+    data: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          attributes: {
+            type: 'object',
+            properties: {
+              blockCreationTime: { type: 'number' },
+              symbol: { type: 'string' },
+              globalRank: {
+                type: 'array',
+                items: { type: 'number' }
+              }
+            },
+            required: ['blockCreationTime', 'globalRank']
+          },
+          relationships: {
+            type: 'object',
+            properties: {
+              from: {
+                type: 'object',
+                properties: {
+                  data: {
+                    type: 'object',
+                    properties: {
+                      id: { type: 'string' }
+                    }
+                  },
+                  links: {
+                    type: 'object',
+                    properties: {
+                      related: { type: 'string' }
+                    }
+                  }
+                }
+              },
+              to: {
+                type: 'object',
+                properties: {
+                  data: {
+                    type: 'object',
+                    properties: {
+                      id: { type: 'string' }
+                    }
+                  },
+                  links: {
+                    type: 'object',
+                    properties: {
+                      related: { type: 'string' }
+                    }
+                  }
+                }
+              },
+              transaction: {
+                type: 'object',
+                properties: {
+                  data: {
+                    type: 'object',
+                    properties: {
+                      id: { type: 'string' }
+                    }
+                  },
+                  links: {
+                    type: 'object',
+                    properties: {
+                      related: { type: 'string' }
+                    }
+                  }
+                }
+              }
+            },
+            required: ['from', 'to', 'transaction']
+          }
+        },
+        required: ['attributes', 'relationships']
+      }
+    },
+    links: {
+      type: 'object',
+      properties: {
+        next: { type: 'string' }
+      }
+    },
+    meta: {
+      type: 'object',
+      properties: {
+        page: {
+          type: 'object',
+          properties: {
+            hasNext: { type: 'boolean' }
+          },
+          required: ['hasNext']
+        }
+      },
+      required: ['page']
+    }
+  },
+  required: ['data', 'links', 'meta']
+}
+
+export const AmberdataAccountsTxSchema = {
+  type: 'object',
+  properties: {
+    payload: {
+      type: 'object',
+      properties: {
+        records: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              hash: { type: 'string' },
+              timestamp: { type: 'string' },
+              blockNumber: { type: 'string' },
+              value: { type: 'string' },
+              fee: { type: 'string' },
+              gasLimit: { type: 'string' },
+              gasPrice: { type: 'string' },
+              gasUsed: { type: 'string' },
+              cumulativeGasUsed: { type: 'string' },
+              from: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    address: { type: 'string' }
+                  },
+                  required: ['address']
+                }
+              },
+              to: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    address: { type: 'string' }
+                  },
+                  required: ['address']
+                }
+              }
+            },
+            required: [
+              'hash',
+              'timestamp',
+              'blockNumber',
+              'value',
+              'fee',
+              'gasLimit',
+              'gasPrice',
+              'gasUsed',
+              'cumulativeGasUsed',
+              'from',
+              'to'
+            ]
+          }
+        }
+      },
+      required: ['records']
+    }
+  },
+  required: ['payload']
+}
