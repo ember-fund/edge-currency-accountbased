@@ -889,8 +889,11 @@ class CurrencyEngine {
       currencyCode = this.currencyInfo.currencyCode
     }
 
+    const otherParams = edgeSpendInfo.otherParams ? edgeSpendInfo.otherParams : null
+    const byPassBalanceCheck = otherParams && otherParams.txOptions ? otherParams.txOptions.byPassBalanceCheck : false
+
     const nativeBalance = this.walletLocalData.totalBalances[currencyCode]
-    if (!nativeBalance || bns.eq(nativeBalance, '0')) {
+    if ((!nativeBalance || bns.eq(nativeBalance, '0')) && !byPassBalanceCheck) {
       throw new InsufficientFundsError()
     }
 
@@ -903,8 +906,6 @@ class CurrencyEngine {
     if (!denom) {
       throw new Error('InternalErrorInvalidCurrencyCode')
     }
-
-    const otherParams = edgeSpendInfo.otherParams ? edgeSpendInfo.otherParams : null
 
     return { edgeSpendInfo, nativeBalance, currencyCode, denom, otherParams }
   }
