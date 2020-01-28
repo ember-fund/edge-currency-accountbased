@@ -1,5 +1,18 @@
 # edge-currency-accountbased
 
+# 0.6.3 (2020-01-06)
+
+- Add ETHBNT
+
+# 0.6.2 (2020-01-01)
+
+- Upgrade to edge-core-js v0.16.17
+- Upgrade devDependencies
+
+# 0.6.1 (2019-12-31)
+
+- Fix missing parent currency code from enabledTokens
+
 # 0.6.0 (2019-12-18)
 
 - Add Amberdata support
