@@ -14,7 +14,7 @@ import {
 } from 'edge-core-js/types'
 
 import { CurrencyEngine } from '../common/engine.js'
-import { validateObject } from '../common/utils.js'
+import { getOtherParams, validateObject } from '../common/utils.js'
 import { currencyInfo } from './xrpInfo.js'
 import { XrpPlugin } from './xrpPlugin.js'
 import {
@@ -84,7 +84,7 @@ export class XrpEngine extends CurrencyEngine {
         }
         break
     }
-    this.log(`XRP multicastServers ${func} ${out.server} won`)
+    this.log(`multicastServers ${func} ${out.server} won`)
     return out.result
   }
 
@@ -336,10 +336,7 @@ export class XrpEngine extends CurrencyEngine {
     try {
       await this.xrpPlugin.connectApi(this.walletId)
     } catch (e) {
-      this.log(`Error connecting to XRP server`)
-      this.log(e)
-      this.log(e.name)
-      this.log(e.message)
+      this.log(`Error connecting to server`, String(e))
       setTimeout(() => {
         if (this.engineOn) {
           this.startEngine()
@@ -450,7 +447,7 @@ export class XrpEngine extends CurrencyEngine {
           if (err.message.includes('has too many decimal places')) {
             // HACK: ripple-js seems to have a bug where this error is intermittently thrown for no reason.
             // Just retrying seems to resolve it. -paulvp
-            console.log(
+            this.log(
               'Got "too many decimal places" error. Retrying... ' + i.toString()
             )
             continue
@@ -485,8 +482,10 @@ export class XrpEngine extends CurrencyEngine {
   }
 
   async signTx(edgeTransaction: EdgeTransaction): Promise<EdgeTransaction> {
+    const otherParams = getOtherParams(edgeTransaction)
+
     // Do signing
-    const txJson = edgeTransaction.otherParams.preparedTx.txJSON
+    const txJson = otherParams.preparedTx.txJSON
     const privateKey = this.walletInfo.keys.rippleKey
 
     const { signedTransaction, id } = await this.multicastServers(

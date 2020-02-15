@@ -6,7 +6,10 @@
 export type EthereumInitOptions = {
   blockcypherApiKey?: string,
   etherscanApiKey?: string | Array<string>,
-  infuraProjectId?: string
+  infuraProjectId?: string,
+  blockchairApiKey?: string,
+  alethioApiKey?: string,
+  amberdataApiKey?: string
 }
 
 export type EthereumSettings = {
@@ -49,7 +52,7 @@ export type EthereumCalcedFees = {
   useDefaults: boolean
 }
 
-export type EtherscanTransaction = {
+export type EtherscanTransaction = {|
   hash: string,
   blockNumber: string,
   timeStamp: string,
@@ -60,15 +63,26 @@ export type EtherscanTransaction = {
   from: string,
   to: string,
   gas: string,
-  gasPrice: string,
-  gasUsed: string,
   cumulativeGasUsed: string,
   isError: string,
   contractAddress?: string,
   tokenName?: string,
   tokenSymbol?: string,
   tokenDecimal?: string
-}
+|}
+
+export type EtherscanInternalTransaction = {|
+  hash: string,
+  blockNumber: string,
+  timeStamp: string,
+  gasUsed: string,
+  value: string,
+  from: string,
+  to: string,
+  gas: string,
+  isError: string,
+  contractAddress?: string
+|}
 
 export type EthereumTxOtherParams = {
   from: Array<string>,
@@ -89,8 +103,10 @@ export type EthereumWalletOtherData = {
 }
 
 export type AlethioTokenTransferAttributes = {
-  blockCreationTime: string,
+  blockCreationTime: number,
   symbol: string,
+  fee: string,
+  value: string,
   globalRank: Array<number>
 }
 
@@ -102,7 +118,8 @@ export type AlethioTransactionDataObj = {
 export type AlethioTransactionRelationships = {
   from: AlethioTransactionDataObj,
   to: AlethioTransactionDataObj,
-  transaction: AlethioTransactionDataObj
+  transaction: AlethioTransactionDataObj,
+  token: AlethioTransactionDataObj
 }
 
 export type AlethioTokenTransfer = {
@@ -111,17 +128,27 @@ export type AlethioTokenTransfer = {
   relationships: AlethioTransactionRelationships
 }
 
-export type AlethioTransactionAttributes = {
-  txHash: string,
-  blockCreationTime: number,
+export type AmberdataTx = {|
+  hash: string,
+  timestamp: string,
+  blockNumber: string,
   value: string,
   fee: string,
-  msgGasLimit: string,
-  txGasPrice: string,
-  txGasUsed: number,
-  msgError: boolean
-}
+  gasLimit: string,
+  gasPrice: string,
+  gasUsed: string,
+  cumulativeGasUsed: string,
+  from: Array<{ address: string }>,
+  to: Array<{ address: string }>
+|}
 
-export type AlethioTransaction = {
-  attributes: AlethioTransactionAttributes
-}
+export type AmberdataInternalTx = {|
+  transactionHash: string,
+  timestamp: string,
+  blockNumber: string,
+  value: string,
+  initialGas: string,
+  leftOverGas: string,
+  from: { address: string },
+  to: Array<{ address: string }>
+|}

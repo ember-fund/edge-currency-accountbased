@@ -11,7 +11,12 @@ import {
 import { eztz } from 'eztz.js'
 
 import { CurrencyEngine } from '../common/engine.js'
-import { asyncWaterfall, promiseAny, validateObject } from '../common/utils.js'
+import {
+  asyncWaterfall,
+  getOtherParams,
+  promiseAny,
+  validateObject
+} from '../common/utils.js'
 import { TezosPlugin } from '../tezos/tezosPlugin.js'
 import { currencyInfo } from './tezosInfo.js'
 import { XtzTransactionSchema } from './tezosSchema.js'
@@ -56,7 +61,7 @@ export class TezosEngine extends CurrencyEngine {
       case 'getHead': {
         // relevant nodes, disabling first node due to caching / polling issue
         // need to re-enable once that nodes issue is fixed
-        const nonCachedNodes = this.tezosPlugin.tezosRpcNodes.slice(1, 3)
+        const nonCachedNodes = this.tezosPlugin.tezosRpcNodes
         funcs = nonCachedNodes.map(server => async () => {
           const result = await this.io
             .fetch(server + '/chains/main/blocks/head/header')
@@ -73,7 +78,7 @@ export class TezosEngine extends CurrencyEngine {
       }
 
       case 'getBalance': {
-        const usableNodes = this.tezosPlugin.tezosRpcNodes.slice(1, 3)
+        const usableNodes = this.tezosPlugin.tezosRpcNodes
         funcs = usableNodes.map(server => async () => {
           eztz.node.setProvider(server)
           const result = await eztz.rpc.getBalance(params[0])
@@ -436,15 +441,17 @@ export class TezosEngine extends CurrencyEngine {
   }
 
   async signTx(edgeTransaction: EdgeTransaction): Promise<EdgeTransaction> {
+    const otherParams = getOtherParams(edgeTransaction)
+
     if (edgeTransaction.signedTx === '') {
       const sk = this.walletInfo.keys.privateKey
       const signed = eztz.crypto.sign(
-        edgeTransaction.otherParams.fullOp.opbytes,
+        otherParams.fullOp.opbytes,
         sk,
         eztz.watermark.generic
       )
-      edgeTransaction.otherParams.fullOp.opbytes = signed.sbytes
-      edgeTransaction.otherParams.fullOp.opOb.signature = signed.edsig
+      otherParams.fullOp.opbytes = signed.sbytes
+      otherParams.fullOp.opOb.signature = signed.edsig
       edgeTransaction.signedTx = signed.sbytes
     }
     return edgeTransaction
@@ -453,8 +460,10 @@ export class TezosEngine extends CurrencyEngine {
   async broadcastTx(
     edgeTransaction: EdgeTransaction
   ): Promise<EdgeTransaction> {
-    const opBytes = edgeTransaction.otherParams.fullOp.opbytes
-    const opOb = edgeTransaction.otherParams.fullOp.opOb
+    const otherParams = getOtherParams(edgeTransaction)
+
+    const opBytes = otherParams.fullOp.opbytes
+    const opOb = otherParams.fullOp.opOb
     const result = await this.multicastServers('injectOperation', opOb, opBytes)
     edgeTransaction.txid = result.hash
     edgeTransaction.date = Date.now() / 1000

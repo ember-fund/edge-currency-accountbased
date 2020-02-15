@@ -25,6 +25,7 @@ export class WalletLocalData {
   blockHeight: number
   lastAddressQueryHeight: number
   lastTransactionQueryHeight: { [currencyCode: string]: number }
+  lastTransactionDate: { [currencyCode: string]: number }
   publicKey: string
   totalBalances: { [currencyCode: string]: string }
   enabledTokens: Array<string>
@@ -38,6 +39,7 @@ export class WalletLocalData {
     this.totalBalances = totalBalances
     this.lastAddressQueryHeight = 0
     this.lastTransactionQueryHeight = {}
+    this.lastTransactionDate = {}
     this.lastCheckedTxsDropped = 0
     this.numUnconfirmedSpendTxs = 0
     this.otherData = {}
@@ -64,10 +66,15 @@ export class WalletLocalData {
       }
       if (typeof data.enabledTokens !== 'undefined') {
         this.enabledTokens = data.enabledTokens
+        if (!this.enabledTokens.includes(primaryCurrency)) {
+          this.enabledTokens.push(primaryCurrency)
+        }
       }
       if (typeof data.otherData !== 'undefined') this.otherData = data.otherData
       if (typeof data.lastTransactionQueryHeight === 'object')
         this.lastTransactionQueryHeight = data.lastTransactionQueryHeight
+      if (typeof data.lastTransactionDate === 'object')
+        this.lastTransactionDate = data.lastTransactionDate
     }
   }
 }

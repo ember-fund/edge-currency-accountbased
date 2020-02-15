@@ -22,6 +22,7 @@ import {
   asyncWaterfall,
   bufToHex,
   getEdgeInfoServer,
+  getOtherParams,
   normalizeAddress,
   toHex,
   validateObject
@@ -133,9 +134,7 @@ export class EthereumEngine extends CurrencyEngine {
 
   async checkUnconfirmedTransactionsInnerLoop() {
     const address = normalizeAddress(this.walletLocalData.publicKey)
-    const url = `${
-      this.currencyInfo.defaultSettings.otherSettings.superethServers[0]
-    }/v1/eth/main/txs/${address}`
+    const url = `${this.currencyInfo.defaultSettings.otherSettings.superethServers[0]}/v1/eth/main/txs/${address}`
     let jsonObj = null
     try {
       jsonObj = await this.ethNetwork.fetchGet(url)
@@ -210,19 +209,19 @@ export class EthereumEngine extends CurrencyEngine {
 
         // Sanity checks
         if (safeLow < 1 || safeLow > 3000) {
-          console.log('Invalid safeLow value from EthGasStation')
+          this.log('Invalid safeLow value from EthGasStation')
           return
         }
         if (average < 1 || average > 3000) {
-          console.log('Invalid average value from EthGasStation')
+          this.log('Invalid average value from EthGasStation')
           return
         }
         if (fast < 1 || fast > 3000) {
-          console.log('Invalid fastest value from EthGasStation')
+          this.log('Invalid fastest value from EthGasStation')
           return
         }
         if (fastest < 1 || fastest > 3000) {
-          console.log('Invalid fastest value from EthGasStation')
+          this.log('Invalid fastest value from EthGasStation')
           return
         }
 
@@ -338,7 +337,7 @@ export class EthereumEngine extends CurrencyEngine {
         const result = await asyncWaterfall(funcs, 5000)
         gasLimit = bns.add(result.result, '0')
       } catch (err) {
-        console.log(err)
+        this.log(err)
       }
     }
 
@@ -434,10 +433,11 @@ export class EthereumEngine extends CurrencyEngine {
   }
 
   async signTx(edgeTransaction: EdgeTransaction): Promise<EdgeTransaction> {
-    // Do signing
+    const otherParams = getOtherParams(edgeTransaction)
 
-    const gasLimitHex = toHex(edgeTransaction.otherParams.gas)
-    const gasPriceHex = toHex(edgeTransaction.otherParams.gasPrice)
+    // Do signing
+    const gasLimitHex = toHex(otherParams.gas)
+    const gasPriceHex = toHex(otherParams.gasPrice)
     let nativeAmountHex
 
     if (edgeTransaction.currencyCode === PRIMARY_CURRENCY) {
@@ -450,34 +450,36 @@ export class EthereumEngine extends CurrencyEngine {
     } else {
       nativeAmountHex = bns.mul('-1', edgeTransaction.nativeAmount, 16)
     }
-
-    let nonceHex
-    // Use an unconfirmed nonce if
-    // 1. We have unconfirmed spending txs in the transaction list
-    // 2. It is greater than the confirmed nonce
-    // 3. Is no more than 5 higher than confirmed nonce
-    if (
-      this.walletLocalData.numUnconfirmedSpendTxs &&
-      bns.gt(
-        this.walletLocalData.otherData.unconfirmedNextNonce,
-        this.walletLocalData.otherData.nextNonce
-      )
-    ) {
-      const diff = bns.sub(
-        this.walletLocalData.otherData.unconfirmedNextNonce,
-        this.walletLocalData.otherData.nextNonce
-      )
-      if (bns.lte(diff, '5')) {
-        nonceHex = toHex(this.walletLocalData.otherData.unconfirmedNextNonce)
-        this.walletLocalData.otherData.unconfirmedNextNonce = bns.add(
+    const nonceArg = otherParams.nonceArg
+    let nonceHex = nonceArg && toHex(nonceArg)
+    if (!nonceHex) {
+      // Use an unconfirmed nonce if
+      // 1. We have unconfirmed spending txs in the transaction list
+      // 2. It is greater than the confirmed nonce
+      // 3. Is no more than 5 higher than confirmed nonce
+      if (
+        this.walletLocalData.numUnconfirmedSpendTxs &&
+        bns.gt(
           this.walletLocalData.otherData.unconfirmedNextNonce,
-          '1'
+          this.walletLocalData.otherData.nextNonce
         )
-        this.walletLocalDataDirty = true
-      } else {
-        const e = new Error('Excessive pending spend transactions')
-        e.name = 'ErrorExcessivePendingSpends'
-        throw e
+      ) {
+        const diff = bns.sub(
+          this.walletLocalData.otherData.unconfirmedNextNonce,
+          this.walletLocalData.otherData.nextNonce
+        )
+        if (bns.lte(diff, '5')) {
+          nonceHex = toHex(this.walletLocalData.otherData.unconfirmedNextNonce)
+          this.walletLocalData.otherData.unconfirmedNextNonce = bns.add(
+            this.walletLocalData.otherData.unconfirmedNextNonce,
+            '1'
+          )
+          this.walletLocalDataDirty = true
+        } else {
+          const e = new Error('Excessive pending spend transactions')
+          e.name = 'ErrorExcessivePendingSpends'
+          throw e
+        }
       }
     }
     if (!nonceHex) {
@@ -489,14 +491,14 @@ export class EthereumEngine extends CurrencyEngine {
     }
 
     let data
-    if (edgeTransaction.otherParams.data != null) {
-      data = edgeTransaction.otherParams.data
+    if (otherParams.data != null) {
+      data = otherParams.data
     } else if (edgeTransaction.currencyCode === PRIMARY_CURRENCY) {
       data = ''
     } else {
       const dataArray = abi.simpleEncode(
         'transfer(address,uint256):(uint256)',
-        edgeTransaction.otherParams.tokenRecipientAddress,
+        otherParams.tokenRecipientAddress,
         nativeAmountHex
       )
       data = '0x' + Buffer.from(dataArray).toString('hex')
@@ -507,7 +509,7 @@ export class EthereumEngine extends CurrencyEngine {
       nonce: nonceHex,
       gasPrice: gasPriceHex,
       gasLimit: gasLimitHex,
-      to: edgeTransaction.otherParams.to[0],
+      to: otherParams.to[0],
       value: nativeAmountHex,
       data: data,
       // EIP 155 chainId - mainnet: 1, ropsten: 3

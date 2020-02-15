@@ -1,3 +1,4 @@
+// @flow
 import { bns } from 'biggystring'
 import type { EdgeTransaction } from 'edge-core-js/src/types/types'
 
@@ -14,19 +15,24 @@ import { EthereumEngine } from './ethEngine'
 import { currencyInfo } from './ethInfo'
 import {
   AlethioAccountsTokenTransferSchema,
-  AlethioAccountsTxSchema,
+  AmberdataAccountsFuncsSchema,
+  AmberdataAccountsTxSchema,
+  AmberdataRpcSchema,
   BlockChairAddressSchema,
   BlockChairStatsSchema,
   EtherscanGetAccountBalance,
   EtherscanGetAccountNonce,
   EtherscanGetBlockHeight,
+  EtherscanGetInternalTransactions,
   EtherscanGetTokenTransactions,
   EtherscanGetTransactions
 } from './ethSchema'
 import type {
   AlethioTokenTransfer,
-  AlethioTransaction,
+  AmberdataInternalTx,
+  AmberdataTx,
   EthereumTxOtherParams,
+  EtherscanInternalTransaction,
   EtherscanTransaction
 } from './ethTypes'
 
@@ -36,6 +42,7 @@ const BAL_POLL_MILLISECONDS = 20000
 const TXS_POLL_MILLISECONDS = 20000
 
 const ADDRESS_QUERY_LOOKBACK_BLOCKS = 4 * 2 // ~ 2 minutes
+const ADDRESS_QUERY_LOOKBACK_SEC = 2 * 60 // ~ 2 minutes
 const NUM_TRANSACTIONS_TO_QUERY = 50
 const PRIMARY_CURRENCY = currencyInfo.currencyCode
 
@@ -53,10 +60,10 @@ type EdgeTransactionsBlockHeightTuple = {
 
 type EthereumNetworkUpdate = {
   blockHeight?: number,
-  nonce?: number,
+  newNonce?: string,
   tokenBal?: { [currencyCode: string]: string },
   tokenTxs?: { [currencyCode: string]: EdgeTransactionsBlockHeightTuple },
-  server: string
+  server?: string
 }
 
 type EthFunction =
@@ -73,6 +80,20 @@ type BroadcastResults = {
   decrementNonce: boolean
 }
 
+type GetEthscanAllTxsOptions = {
+  contractAddress?: string,
+  searchRegularTxs?: boolean
+}
+
+type GetEthscanAllTxsResponse = {
+  allTransactions: Array<EdgeTransaction>,
+  server: string
+}
+
+const AMBERDATA_BLOCKCHAIN_IDS = {
+  ETH_MAINNET: '1c9c969065fcd1cf'
+}
+
 async function broadcastWrapper(promise: Promise<Object>, server: string) {
   const out = {
     result: await promise,
@@ -83,6 +104,23 @@ async function broadcastWrapper(promise: Promise<Object>, server: string) {
 
 export class EthereumNetwork {
   ethNeeds: EthereumNeeds
+  ethEngine: EthereumEngine
+  fetchGetEtherscan: (...any) => any
+  fetchPostInfura: (...any) => any
+  multicastServers: (...any) => any
+  checkBlockHeightEthscan: (...any) => any
+  checkBlockHeightBlockchair: (...any) => any
+  checkBlockHeightAmberdata: (...any) => any
+  checkBlockHeight: (...any) => any
+  checkNonceEthscan: (...any) => any
+  checkNonceAmberdata: (...any) => any
+  checkNonce: (...any) => any
+  checkTxs: (...any) => any
+  checkTokenBalEthscan: (...any) => any
+  checkTokenBalBlockchair: (...any) => any
+  checkTokenBal: (...any) => any
+  processEthereumNetworkUpdate: (...any) => any
+
   constructor(ethEngine: EthereumEngine) {
     this.ethEngine = ethEngine
     this.ethNeeds = {
@@ -97,7 +135,10 @@ export class EthereumNetwork {
     this.multicastServers = this.multicastServers.bind(this)
     this.checkBlockHeightEthscan = this.checkBlockHeightEthscan.bind(this)
     this.checkBlockHeightBlockchair = this.checkBlockHeightBlockchair.bind(this)
+    this.checkBlockHeightAmberdata = this.checkBlockHeightAmberdata.bind(this)
     this.checkBlockHeight = this.checkBlockHeight.bind(this)
+    this.checkNonceEthscan = this.checkNonceEthscan.bind(this)
+    this.checkNonceAmberdata = this.checkNonceAmberdata.bind(this)
     this.checkNonce = this.checkNonce.bind(this)
     this.checkTxs = this.checkTxs.bind(this)
     this.checkTokenBalEthscan = this.checkTokenBalEthscan.bind(this)
@@ -108,7 +149,10 @@ export class EthereumNetwork {
     )
   }
 
-  processEtherscanTransaction(tx: EtherscanTransaction, currencyCode: string) {
+  processEtherscanTransaction(
+    tx: EtherscanTransaction | EtherscanInternalTransaction,
+    currencyCode: string
+  ) {
     let netNativeAmount: string // Amount received into wallet
     const ourReceiveAddresses: Array<string> = []
     let nativeNetworkFee: string
@@ -116,7 +160,11 @@ export class EthereumNetwork {
     if (tx.contractAddress) {
       nativeNetworkFee = '0'
     } else {
-      nativeNetworkFee = bns.mul(tx.gasPrice, tx.gasUsed)
+      if (tx.gasPrice) {
+        nativeNetworkFee = bns.mul(tx.gasPrice, tx.gasUsed)
+      } else {
+        nativeNetworkFee = '0'
+      }
     }
 
     if (
@@ -146,9 +194,9 @@ export class EthereumNetwork {
       from: [tx.from],
       to: [tx.to],
       gas: tx.gas,
-      gasPrice: tx.gasPrice,
+      gasPrice: tx.gasPrice || '',
       gasUsed: tx.gasUsed,
-      cumulativeGasUsed: tx.cumulativeGasUsed,
+      cumulativeGasUsed: tx.cumulativeGasUsed || '',
       errorVal: parseInt(tx.isError),
       tokenRecipientAddress: null
     }
@@ -172,28 +220,26 @@ export class EthereumNetwork {
 
   processAlethioTransaction(
     tokenTransfer: AlethioTokenTransfer,
-    tx: AlethioTransaction,
     currencyCode: string
   ): EdgeTransaction | null {
     let netNativeAmount: string
     const ourReceiveAddresses: Array<string> = []
     let nativeNetworkFee: string
     let tokenRecipientAddress: string | null
-    let parentNetworkFee: string
 
-    const value = tx.attributes.value
-    const fee = tx.attributes.fee
+    const value = tokenTransfer.attributes.value
+    const fee = tokenTransfer.attributes.fee
+      ? tokenTransfer.attributes.fee
+      : '0'
     const fromAddress = tokenTransfer.relationships.from.data.id
     const toAddress = tokenTransfer.relationships.to.data.id
 
     if (currencyCode === PRIMARY_CURRENCY) {
       nativeNetworkFee = fee
       tokenRecipientAddress = null
-      parentNetworkFee = ''
     } else {
       nativeNetworkFee = '0'
       tokenRecipientAddress = toAddress
-      parentNetworkFee = fee
     }
 
     if (
@@ -227,29 +273,169 @@ export class EthereumNetwork {
     const otherParams: EthereumTxOtherParams = {
       from: [fromAddress],
       to: [toAddress],
-      gas: tx.attributes.msgGasLimit,
-      gasPrice: tx.attributes.txGasPrice,
-      gasUsed: `${tx.attributes.txGasUsed}`,
-      errorVal: tx.attributes.msgError ? 1 : 0,
+      gas: '0',
+      gasPrice: '0',
+      gasUsed: '0',
+      errorVal: 0,
       tokenRecipientAddress
     }
 
     let blockHeight = tokenTransfer.attributes.globalRank[0]
     if (blockHeight < 0) blockHeight = 0
     const edgeTransaction: EdgeTransaction = {
-      txid: tx.attributes.txHash,
-      date: tx.attributes.blockCreationTime,
+      txid: tokenTransfer.relationships.transaction.data.id,
+      date: tokenTransfer.attributes.blockCreationTime,
       currencyCode,
       blockHeight,
       nativeAmount: netNativeAmount,
       networkFee: nativeNetworkFee,
       ourReceiveAddresses,
       signedTx: '',
-      parentNetworkFee,
+      parentNetworkFee: '',
       otherParams
     }
 
     return edgeTransaction
+  }
+
+  processAmberdataTxInternal(
+    amberdataTx: AmberdataInternalTx,
+    currencyCode: string
+  ): EdgeTransaction | null {
+    const walletAddress = this.ethEngine.walletLocalData.publicKey
+    let netNativeAmount: string = bns.add('0', amberdataTx.value)
+    const ourReceiveAddresses: Array<string> = []
+    let nativeNetworkFee: string
+
+    const value = amberdataTx.value
+    const fromAddress = amberdataTx.from.address || ''
+    const toAddress = amberdataTx.to.length > 0 ? amberdataTx.to[0].address : ''
+
+    if (fromAddress && toAddress) {
+      nativeNetworkFee = '0'
+
+      if (fromAddress.toLowerCase() === walletAddress.toLowerCase()) {
+        // is a spend
+        if (fromAddress.toLowerCase() === toAddress.toLowerCase()) {
+          // Spend to self. netNativeAmount is just the fee
+          netNativeAmount = bns.mul(nativeNetworkFee, '-1')
+        } else {
+          // spend to someone else
+          netNativeAmount = bns.sub('0', value)
+
+          // For spends, include the network fee in the transaction amount
+          netNativeAmount = bns.sub(netNativeAmount, nativeNetworkFee)
+        }
+      } else if (toAddress.toLowerCase() === walletAddress.toLowerCase()) {
+        // Receive transaction
+        netNativeAmount = value
+        ourReceiveAddresses.push(walletAddress.toLowerCase())
+      } else {
+        return null
+      }
+
+      const otherParams: EthereumTxOtherParams = {
+        from: [fromAddress],
+        to: [toAddress],
+        gas: '0',
+        gasPrice: '0',
+        gasUsed: '0',
+        errorVal: 0,
+        tokenRecipientAddress: null
+      }
+
+      let blockHeight = parseInt(amberdataTx.blockNumber, 10)
+      if (blockHeight < 0) blockHeight = 0
+      const date = new Date(amberdataTx.timestamp).getTime() / 1000
+      const edgeTransaction: EdgeTransaction = {
+        txid: amberdataTx.transactionHash,
+        date,
+        currencyCode,
+        blockHeight,
+        nativeAmount: netNativeAmount,
+        networkFee: nativeNetworkFee,
+        ourReceiveAddresses,
+        signedTx: '',
+        parentNetworkFee: '',
+        otherParams
+      }
+
+      return edgeTransaction
+    } else {
+      return null
+    }
+  }
+
+  processAmberdataTxRegular(
+    amberdataTx: AmberdataTx,
+    currencyCode: string
+  ): EdgeTransaction | null {
+    const walletAddress = this.ethEngine.walletLocalData.publicKey
+    let netNativeAmount: string
+    const ourReceiveAddresses: Array<string> = []
+    let nativeNetworkFee: string
+    let tokenRecipientAddress: string | null
+
+    const value = amberdataTx.value
+    const fee = amberdataTx.fee ? amberdataTx.fee : '0'
+    const fromAddress =
+      amberdataTx.from.length > 0 ? amberdataTx.from[0].address : ''
+    const toAddress = amberdataTx.to.length > 0 ? amberdataTx.to[0].address : ''
+
+    if (fromAddress && toAddress) {
+      nativeNetworkFee = fee
+      tokenRecipientAddress = null
+
+      if (fromAddress.toLowerCase() === walletAddress.toLowerCase()) {
+        // is a spend
+        if (fromAddress.toLowerCase() === toAddress.toLowerCase()) {
+          // Spend to self. netNativeAmount is just the fee
+          netNativeAmount = bns.mul(nativeNetworkFee, '-1')
+        } else {
+          // spend to someone else
+          netNativeAmount = bns.sub('0', value)
+
+          // For spends, include the network fee in the transaction amount
+          netNativeAmount = bns.sub(netNativeAmount, nativeNetworkFee)
+        }
+      } else if (toAddress.toLowerCase() === walletAddress.toLowerCase()) {
+        // Receive transaction
+        netNativeAmount = value
+        ourReceiveAddresses.push(walletAddress.toLowerCase())
+      } else {
+        return null
+      }
+
+      const otherParams: EthereumTxOtherParams = {
+        from: [fromAddress],
+        to: [toAddress],
+        gas: '0',
+        gasPrice: '0',
+        gasUsed: '0',
+        errorVal: 0,
+        tokenRecipientAddress
+      }
+
+      let blockHeight = parseInt(amberdataTx.blockNumber, 10)
+      if (blockHeight < 0) blockHeight = 0
+      const date = new Date(amberdataTx.timestamp).getTime() / 1000
+      const edgeTransaction: EdgeTransaction = {
+        txid: amberdataTx.hash,
+        date,
+        currencyCode,
+        blockHeight,
+        nativeAmount: netNativeAmount,
+        networkFee: nativeNetworkFee,
+        ourReceiveAddresses,
+        signedTx: '',
+        parentNetworkFee: '',
+        otherParams
+      }
+
+      return edgeTransaction
+    } else {
+      return null
+    }
   }
 
   async fetchGet(url: string, _options: Object = {}) {
@@ -324,10 +510,7 @@ export class EthereumNetwork {
     if (blockcypherApiKey && blockcypherApiKey.length > 5) {
       apiKey = '&token=' + blockcypherApiKey
     }
-    const url = `${
-      this.ethEngine.currencyInfo.defaultSettings.otherSettings
-        .blockcypherApiServers[0]
-    }/${cmd}${apiKey}`
+    const url = `${this.ethEngine.currencyInfo.defaultSettings.otherSettings.blockcypherApiServers[0]}/${cmd}${apiKey}`
     const response = await this.ethEngine.io.fetch(url, {
       headers: {
         Accept: 'application/json',
@@ -341,15 +524,47 @@ export class EthereumNetwork {
 
   async fetchGetBlockchair(path: string, includeKey: boolean = false) {
     let keyParam = ''
-    if (includeKey) {
-      const { blockchairApiKey } = this.ethEngine.initOptions
+    const { blockchairApiKey } = this.ethEngine.initOptions
+    if (includeKey && blockchairApiKey) {
       keyParam = `&key=${blockchairApiKey}`
     }
-    const url = `${
-      this.ethEngine.currencyInfo.defaultSettings.otherSettings
-        .blockchairApiServers[0]
-    }${path}${keyParam}`
+    const url = `${this.ethEngine.currencyInfo.defaultSettings.otherSettings.blockchairApiServers[0]}${path}${keyParam}`
     return this.fetchGet(url)
+  }
+
+  async fetchPostAmberdataRpc(method: string, params: Array<string> = []) {
+    const { amberdataApiKey } = this.ethEngine.initOptions
+    let apiKey = ''
+    if (amberdataApiKey) {
+      apiKey = '?x-api-key=' + amberdataApiKey
+    }
+    const url = `${this.ethEngine.currencyInfo.defaultSettings.otherSettings.amberdataRpcServers[0]}${apiKey}`
+    const body = {
+      jsonrpc: '2.0',
+      method: method,
+      params: params,
+      id: 1
+    }
+    const response = await this.ethEngine.io.fetch(url, {
+      headers: {
+        'x-amberdata-blockchain-id': AMBERDATA_BLOCKCHAIN_IDS.ETH_MAINNET
+      },
+      method: 'POST',
+      body: JSON.stringify(body)
+    })
+    const jsonObj = await response.json()
+    return jsonObj
+  }
+
+  async fetchGetAmberdataApi(path: string) {
+    const { amberdataApiKey } = this.ethEngine.initOptions
+    const url = `${this.ethEngine.currencyInfo.defaultSettings.otherSettings.amberdataApiServers[0]}${path}`
+    return this.fetchGet(url, {
+      headers: {
+        'x-amberdata-blockchain-id': AMBERDATA_BLOCKCHAIN_IDS.ETH_MAINNET,
+        'x-api-key': amberdataApiKey
+      }
+    })
   }
 
   /*
@@ -361,14 +576,10 @@ export class EthereumNetwork {
    * @throws Exception when Alethio throttles with a 429 response code
    */
   async fetchGetAlethio(pathOrLink: string, isPath: boolean = true) {
-    console.log(`fetchGetAlethio: ${pathOrLink}`)
     const { alethioApiKey } = this.ethEngine.initOptions
     if (alethioApiKey) {
       const url = isPath
-        ? `${
-            this.ethEngine.currencyInfo.defaultSettings.otherSettings
-              .alethioApiServers[0]
-          }${pathOrLink}`
+        ? `${this.ethEngine.currencyInfo.defaultSettings.otherSettings.alethioApiServers[0]}${pathOrLink}`
         : pathOrLink
       return this.fetchGet(url, {
         headers: {
@@ -523,9 +734,7 @@ export class EthereumNetwork {
         break
 
       case 'eth_getTransactionCount':
-        url = `?module=proxy&action=eth_getTransactionCount&address=${
-          params[0]
-        }&tag=latest`
+        url = `?module=proxy&action=eth_getTransactionCount&address=${params[0]}&tag=latest`
         funcs = this.ethEngine.currencyInfo.defaultSettings.otherSettings.etherscanApiServers.map(
           server => async () => {
             if (!server.includes('etherscan')) {
@@ -586,9 +795,7 @@ export class EthereumNetwork {
         out = await asyncWaterfall(funcs)
         break
       case 'getTokenBalance':
-        url = `?module=account&action=tokenbalance&contractaddress=${
-          params[1]
-        }&address=${params[0]}&tag=latest`
+        url = `?module=account&action=tokenbalance&contractaddress=${params[1]}&address=${params[0]}&tag=latest`
         funcs = this.ethEngine.currencyInfo.defaultSettings.otherSettings.etherscanApiServers.map(
           server => async () => {
             const result = await this.fetchGetEtherscan(server, url)
@@ -611,11 +818,14 @@ export class EthereumNetwork {
           startBlock,
           page,
           offset,
-          contractAddress
+          contractAddress,
+          searchRegularTxs
         } = params[0]
         let startUrl
         if (currencyCode === 'ETH') {
-          startUrl = `?action=txlist&module=account`
+          startUrl = `?action=${
+            searchRegularTxs ? 'txlist' : 'txlistinternal'
+          }&module=account`
         } else {
           startUrl = `?action=tokentx&contractaddress=${contractAddress}&module=account`
         }
@@ -668,9 +878,21 @@ export class EthereumNetwork {
     }
   }
 
+  async checkBlockHeightAmberdata(): Promise<EthereumNetworkUpdate> {
+    const jsonObj = await this.fetchPostAmberdataRpc('eth_blockNumber', [])
+    const valid = validateObject(jsonObj, AmberdataRpcSchema)
+    if (valid) {
+      const blockHeight = parseInt(jsonObj.result, 16)
+      return { blockHeight, server: 'amberdata' }
+    } else {
+      throw new Error('Amberdata returned invalid JSON')
+    }
+  }
+
   async checkBlockHeight(): Promise<EthereumNetworkUpdate> {
     return asyncWaterfall([
       this.checkBlockHeightEthscan,
+      this.checkBlockHeightAmberdata,
       this.checkBlockHeightBlockchair
     ]).catch(err => {
       this.ethEngine.log('checkBlockHeight failed to update', err)
@@ -678,47 +900,62 @@ export class EthereumNetwork {
     })
   }
 
-  async checkNonce(): Promise<EthereumNetworkUpdate> {
-    try {
-      const address = this.ethEngine.walletLocalData.publicKey
-      const { result: jsonObj, server } = await this.multicastServers(
-        'eth_getTransactionCount',
-        address
-      )
-      const valid = validateObject(jsonObj, EtherscanGetAccountNonce)
-      if (valid) {
-        const nonce = bns.add('0', jsonObj.result)
-        return { nonce, server }
-      }
-    } catch (err) {
-      this.ethEngine.log('Error fetching height: ' + err)
+  async checkNonceEthscan(): Promise<EthereumNetworkUpdate> {
+    const address = this.ethEngine.walletLocalData.publicKey
+    const { result: jsonObj, server } = await this.multicastServers(
+      'eth_getTransactionCount',
+      address
+    )
+    const valid = validateObject(jsonObj, EtherscanGetAccountNonce)
+    if (valid) {
+      const newNonce = bns.add('0', jsonObj.result)
+      return { newNonce, server }
+    } else {
+      throw new Error('Ethscan returned invalid JSON')
     }
-    return {}
   }
 
-  async checkTxsEthscan(
+  async checkNonceAmberdata(): Promise<EthereumNetworkUpdate> {
+    const address = this.ethEngine.walletLocalData.publicKey
+    const jsonObj = await this.fetchPostAmberdataRpc(
+      'eth_getTransactionCount',
+      [address, 'latest']
+    )
+    const valid = validateObject(jsonObj, AmberdataRpcSchema)
+    if (valid) {
+      const newNonce = `${parseInt(jsonObj.result, 16)}`
+      return { newNonce, server: 'amberdata' }
+    } else {
+      throw new Error('Amberdata returned invalid JSON')
+    }
+  }
+
+  async checkNonce(): Promise<EthereumNetworkUpdate> {
+    return asyncWaterfall([
+      this.checkNonceEthscan,
+      this.checkNonceAmberdata
+    ]).catch(err => {
+      this.ethEngine.log('checkNonce failed to update', err)
+      return {}
+    })
+  }
+
+  async getAllTxsEthscan(
     startBlock: number,
-    currencyCode: string
-  ): Promise<EthereumNetworkUpdate> {
+    currencyCode: string,
+    schema:
+      | EtherscanGetTransactions
+      | EtherscanGetInternalTransactions
+      | EtherscanGetTokenTransactions,
+    options: GetEthscanAllTxsOptions
+  ): Promise<GetEthscanAllTxsResponse> {
     const address = this.ethEngine.walletLocalData.publicKey
     let page = 1
-    let contractAddress = ''
-    let schema
 
-    if (currencyCode === PRIMARY_CURRENCY) {
-      schema = EtherscanGetTransactions
-    } else {
-      const tokenInfo = this.ethEngine.getTokenInfo(currencyCode)
-      if (tokenInfo && typeof tokenInfo.contractAddress === 'string') {
-        contractAddress = tokenInfo.contractAddress
-        schema = EtherscanGetTokenTransactions
-      } else {
-        return {}
-      }
-    }
-
-    const allTransactions = []
-    let server
+    const allTransactions: Array<EdgeTransaction> = []
+    let server: string = ''
+    const contractAddress = options.contractAddress
+    const searchRegularTxs = options.searchRegularTxs
     while (1) {
       const offset = NUM_TRANSACTIONS_TO_QUERY
       const response = await this.multicastServers('getTransactions', {
@@ -727,7 +964,8 @@ export class EthereumNetwork {
         startBlock,
         page,
         offset,
-        contractAddress
+        contractAddress,
+        searchRegularTxs
       })
       server = response.server
       const jsonObj = response.result
@@ -752,6 +990,51 @@ export class EthereumNetwork {
       }
     }
 
+    return { allTransactions, server }
+  }
+
+  async checkTxsEthscan(
+    startBlock: number,
+    currencyCode: string
+  ): Promise<EthereumNetworkUpdate> {
+    let server
+    let allTransactions
+
+    if (currencyCode === PRIMARY_CURRENCY) {
+      const txsRegularResp = await this.getAllTxsEthscan(
+        startBlock,
+        currencyCode,
+        EtherscanGetTransactions,
+        { searchRegularTxs: true }
+      )
+      const txsInternalResp = await this.getAllTxsEthscan(
+        startBlock,
+        currencyCode,
+        EtherscanGetInternalTransactions,
+        { searchRegularTxs: false }
+      )
+      server = txsRegularResp.server || txsInternalResp.server
+      allTransactions = [
+        ...txsRegularResp.allTransactions,
+        ...txsInternalResp.allTransactions
+      ]
+    } else {
+      const tokenInfo = this.ethEngine.getTokenInfo(currencyCode)
+      if (tokenInfo && typeof tokenInfo.contractAddress === 'string') {
+        const contractAddress = tokenInfo.contractAddress
+        const resp = await this.getAllTxsEthscan(
+          startBlock,
+          currencyCode,
+          EtherscanGetTokenTransactions,
+          { contractAddress }
+        )
+        server = resp.server
+        allTransactions = resp.allTransactions
+      } else {
+        return {}
+      }
+    }
+
     const edgeTransactionsBlockHeightTuple: EdgeTransactionsBlockHeightTuple = {
       blockHeight: startBlock,
       edgeTransactions: allTransactions
@@ -766,7 +1049,7 @@ export class EthereumNetwork {
    * @returns The currencyCode of the token or undefined if
    * the token is not enabled for this user.
    */
-  getTokenCurrencyCode(txnContractAddress: string): string | undefined {
+  getTokenCurrencyCode(txnContractAddress: string): string | void {
     const address = this.ethEngine.walletLocalData.publicKey
     if (txnContractAddress.toLowerCase() === address.toLowerCase()) {
       return 'ETH'
@@ -777,6 +1060,7 @@ export class EthereumNetwork {
           const tokenContractAddress = tokenInfo.contractAddress
           if (
             txnContractAddress &&
+            typeof tokenContractAddress === 'string' &&
             tokenContractAddress.toLowerCase() ===
               txnContractAddress.toLowerCase()
           ) {
@@ -820,26 +1104,18 @@ export class EthereumNetwork {
         for (const tokenTransfer of tokenTransfers) {
           const txBlockheight = tokenTransfer.attributes.globalRank[0]
           if (txBlockheight > startBlock) {
-            const contractAddress = tokenTransfer.relationships.token.data.id
-            const currencyCode = this.getTokenCurrencyCode(contractAddress)
-            if (typeof currencyCode === 'string') {
-              const txLink =
-                tokenTransfer.relationships.transaction.links.related
-              const txJsonObj = await this.fetchGetAlethio(txLink, false)
-              const txValid = validateObject(txJsonObj, AlethioAccountsTxSchema)
-              if (txValid) {
-                const tx = this.processAlethioTransaction(
-                  tokenTransfer,
-                  txJsonObj.data,
-                  currencyCode
-                )
-                if (tx) {
-                  allTransactions.push(tx)
-                }
-              } else {
-                throw new Error(
-                  `checkTxsAlethio ${txLink} response is invalid(1)`
-                )
+            let txCurrencyCode = PRIMARY_CURRENCY
+            if (currencyCode !== PRIMARY_CURRENCY) {
+              const contractAddress = tokenTransfer.relationships.token.data.id
+              txCurrencyCode = this.getTokenCurrencyCode(contractAddress)
+            }
+            if (typeof txCurrencyCode === 'string') {
+              const tx = this.processAlethioTransaction(
+                tokenTransfer,
+                txCurrencyCode
+              )
+              if (tx) {
+                allTransactions.push(tx)
               }
             }
           } else {
@@ -885,14 +1161,128 @@ export class EthereumNetwork {
     return response
   }
 
-  async checkTxs(
+  async getAllTxsAmberdata(
     startBlock: number,
+    startDate: number,
+    currencyCode: string,
+    searchRegularTxs: boolean
+  ): Promise<Array<EdgeTransaction>> {
+    const address = this.ethEngine.walletLocalData.publicKey
+
+    let page = 0
+    const allTransactions: Array<EdgeTransaction> = []
+    while (1) {
+      let url = `/addresses/${address}/${
+        searchRegularTxs ? 'transactions' : 'functions'
+      }?page=${page}&size=${NUM_TRANSACTIONS_TO_QUERY}`
+
+      if (searchRegularTxs) {
+        if (startDate) {
+          const newDateObj = new Date(startDate)
+          const now = new Date()
+          if (newDateObj) {
+            url =
+              url +
+              `&startDate=${newDateObj.toISOString()}&endDate=${now.toISOString()}`
+          }
+        }
+        const jsonObj = await this.fetchGetAmberdataApi(url)
+        const valid = validateObject(jsonObj, AmberdataAccountsTxSchema)
+        if (valid) {
+          const amberdataTxs: Array<AmberdataTx> = jsonObj.payload.records
+          for (const amberdataTx of amberdataTxs) {
+            const tx = this.processAmberdataTxRegular(amberdataTx, currencyCode)
+            if (tx) {
+              allTransactions.push(tx)
+            }
+          }
+          if (amberdataTxs.length < NUM_TRANSACTIONS_TO_QUERY) {
+            break
+          }
+          page++
+        } else {
+          throw new Error('checkTxsAmberdata (regular tx) response is invalid')
+        }
+      } else {
+        if (startDate) {
+          url = url + `&startDate=${startDate}&endDate=${Date.now()}`
+        }
+        const jsonObj = await this.fetchGetAmberdataApi(url)
+        const valid = validateObject(jsonObj, AmberdataAccountsFuncsSchema)
+        if (valid) {
+          const amberdataTxs: Array<AmberdataInternalTx> =
+            jsonObj.payload.records
+          for (const amberdataTx of amberdataTxs) {
+            const tx = this.processAmberdataTxInternal(
+              amberdataTx,
+              currencyCode
+            )
+            if (tx) {
+              allTransactions.push(tx)
+            }
+          }
+          if (amberdataTxs.length < NUM_TRANSACTIONS_TO_QUERY) {
+            break
+          }
+          page++
+        } else {
+          throw new Error('checkTxsAmberdata (internal tx) response is invalid')
+        }
+      }
+    }
+
+    return allTransactions
+  }
+
+  async checkTxsAmberdata(
+    startBlock: number,
+    startDate: number,
     currencyCode: string
   ): Promise<EthereumNetworkUpdate> {
-    return asyncWaterfall([
-      async () => this.checkTxsAlethio(startBlock, currencyCode),
-      async () => this.checkTxsEthscan(startBlock, currencyCode)
-    ]).catch(err => {
+    const allTxsRegular: Array<EdgeTransaction> = await this.getAllTxsAmberdata(
+      startBlock,
+      startDate,
+      currencyCode,
+      true
+    )
+
+    const allTxsInternal: Array<EdgeTransaction> = await this.getAllTxsAmberdata(
+      startBlock,
+      startDate,
+      currencyCode,
+      false
+    )
+
+    return {
+      tokenTxs: {
+        ETH: {
+          blockHeight: startBlock,
+          edgeTransactions: [...allTxsRegular, ...allTxsInternal]
+        }
+      },
+      server: 'amberdata'
+    }
+  }
+
+  async checkTxs(
+    startBlock: number,
+    startDate: number,
+    currencyCode: string
+  ): Promise<EthereumNetworkUpdate> {
+    let checkTxsFuncs = []
+    if (currencyCode === PRIMARY_CURRENCY) {
+      checkTxsFuncs = [
+        async () => this.checkTxsAmberdata(startBlock, startDate, currencyCode),
+        async () => this.checkTxsAlethio(startBlock, currencyCode),
+        async () => this.checkTxsEthscan(startBlock, currencyCode)
+      ]
+    } else {
+      checkTxsFuncs = [
+        async () => this.checkTxsAlethio(startBlock, currencyCode),
+        async () => this.checkTxsEthscan(startBlock, currencyCode)
+      ]
+    }
+    return asyncWaterfall(checkTxsFuncs).catch(err => {
       this.ethEngine.log('checkTxs failed to update', err)
       return {}
     })
@@ -909,14 +1299,16 @@ export class EthereumNetwork {
       server = response.server
     } else {
       const tokenInfo = this.ethEngine.getTokenInfo(tk)
-      const contractAddress = tokenInfo.contractAddress
-      const response = await this.multicastServers(
-        'getTokenBalance',
-        address,
-        contractAddress
-      )
-      jsonObj = response.result
-      server = response.server
+      if (tokenInfo && typeof tokenInfo.contractAddress === 'string') {
+        const contractAddress = tokenInfo.contractAddress
+        const response = await this.multicastServers(
+          'getTokenBalance',
+          address,
+          contractAddress
+        )
+        jsonObj = response.result
+        server = response.server
+      }
     }
     const valid = validateObject(jsonObj, EtherscanGetAccountBalance)
     if (valid) {
@@ -945,7 +1337,7 @@ export class EthereumNetwork {
         const tokenAddress = tokenData.token_address
         const tokenSymbol = tokenData.token_symbol
         const tokenInfo = this.ethEngine.getTokenInfo(tokenSymbol)
-        if (tokenInfo.contractAddress === tokenAddress) {
+        if (tokenInfo && tokenInfo.contractAddress === tokenAddress) {
           response[tokenSymbol] = balance
         } else {
           // Do nothing, eg: Old DAI token balance is ignored
@@ -975,8 +1367,12 @@ export class EthereumNetwork {
   ) {
     const now = Date.now()
     if (now - lastChecked > pollMillisec) {
-      const ethUpdate = await checkFunc()
-      this.processEthereumNetworkUpdate(now, ethUpdate, preUpdateBlockHeight)
+      try {
+        const ethUpdate = await checkFunc()
+        this.processEthereumNetworkUpdate(now, ethUpdate, preUpdateBlockHeight)
+      } catch (e) {
+        console.log(e)
+      }
     }
   }
 
@@ -984,6 +1380,15 @@ export class EthereumNetwork {
     if (queryHeight > ADDRESS_QUERY_LOOKBACK_BLOCKS) {
       // Only query for transactions as far back as ADDRESS_QUERY_LOOKBACK_BLOCKS from the last time we queried transactions
       return queryHeight - ADDRESS_QUERY_LOOKBACK_BLOCKS
+    } else {
+      return 0
+    }
+  }
+
+  getQueryDateWithLookback(date: number): number {
+    if (date > ADDRESS_QUERY_LOOKBACK_SEC) {
+      // Only query for transactions as far back as ADDRESS_QUERY_LOOKBACK_SEC from the last time we queried transactions
+      return date - ADDRESS_QUERY_LOOKBACK_SEC
     } else {
       return 0
     }
@@ -1006,7 +1411,19 @@ export class EthereumNetwork {
         this.checkNonce
       )
 
-      for (const tk of this.ethEngine.walletLocalData.enabledTokens) {
+      let currencyCodes
+      if (
+        this.ethEngine.walletLocalData.enabledTokens.indexOf(
+          PRIMARY_CURRENCY
+        ) === -1
+      ) {
+        currencyCodes = [PRIMARY_CURRENCY].concat(
+          this.ethEngine.walletLocalData.enabledTokens
+        )
+      } else {
+        currencyCodes = this.ethEngine.walletLocalData.enabledTokens
+      }
+      for (const tk of currencyCodes) {
         await this.checkAndUpdate(
           this.ethNeeds.tokenBalLastChecked[tk],
           BAL_POLL_MILLISECONDS,
@@ -1022,6 +1439,9 @@ export class EthereumNetwork {
             this.checkTxs(
               this.getQueryHeightWithLookback(
                 this.ethEngine.walletLocalData.lastTransactionQueryHeight[tk]
+              ),
+              this.getQueryDateWithLookback(
+                this.ethEngine.walletLocalData.lastTransactionDate[tk]
               ),
               tk
             )
@@ -1040,11 +1460,15 @@ export class EthereumNetwork {
     if (!ethereumNetworkUpdate) return
     if (ethereumNetworkUpdate.blockHeight) {
       this.ethEngine.log(
-        `ETH processEthereumNetworkUpdate blockHeight ${ethereumNetworkUpdate.server} won`
+        `ETH processEthereumNetworkUpdate blockHeight ${ethereumNetworkUpdate.server ||
+          'no server'} won`
       )
       const blockHeight = ethereumNetworkUpdate.blockHeight
-      this.ethEngine.log(`Got block height ${blockHeight}`)
-      if (this.ethEngine.walletLocalData.blockHeight !== blockHeight) {
+      this.ethEngine.log(`Got block height ${blockHeight || 'no blockheight'}`)
+      if (
+        typeof blockHeight === 'number' &&
+        this.ethEngine.walletLocalData.blockHeight !== blockHeight
+      ) {
         this.ethNeeds.blockHeightLastChecked = now
         this.ethEngine.checkDroppedTransactionsThrottled()
         this.ethEngine.walletLocalData.blockHeight = blockHeight // Convert to decimal
@@ -1055,35 +1479,39 @@ export class EthereumNetwork {
       }
     }
 
-    if (ethereumNetworkUpdate.nonce) {
+    if (ethereumNetworkUpdate.newNonce) {
       this.ethEngine.log(
-        `ETH processEthereumNetworkUpdate nonce ${ethereumNetworkUpdate.server} won`
+        `ETH processEthereumNetworkUpdate nonce ${ethereumNetworkUpdate.server ||
+          'no server'} won`
       )
       this.ethNeeds.nonceLastChecked = now
       this.ethEngine.walletLocalData.otherData.nextNonce =
-        ethereumNetworkUpdate.nonce
+        ethereumNetworkUpdate.newNonce
       this.ethEngine.walletLocalDataDirty = true
     }
 
     if (ethereumNetworkUpdate.tokenBal) {
+      const tokenBal = ethereumNetworkUpdate.tokenBal
       this.ethEngine.log(
-        `ETH processEthereumNetworkUpdate tokenBal ${ethereumNetworkUpdate.server} won`
+        `ETH processEthereumNetworkUpdate tokenBal ${ethereumNetworkUpdate.server ||
+          'no server'} won`
       )
-      for (const tk of Object.keys(ethereumNetworkUpdate.tokenBal)) {
+      for (const tk of Object.keys(tokenBal)) {
         this.ethNeeds.tokenBalLastChecked[tk] = now
-        this.ethEngine.updateBalance(tk, ethereumNetworkUpdate.tokenBal[tk])
+        this.ethEngine.updateBalance(tk, tokenBal[tk])
       }
     }
 
     if (ethereumNetworkUpdate.tokenTxs) {
+      const tokenTxs = ethereumNetworkUpdate.tokenTxs
       this.ethEngine.log(
-        `ETH processEthereumNetworkUpdate tokenTxs ${ethereumNetworkUpdate.server} won`
+        `ETH processEthereumNetworkUpdate tokenTxs ${ethereumNetworkUpdate.server ||
+          'no server'} won`
       )
-      for (const tk of Object.keys(ethereumNetworkUpdate.tokenTxs)) {
+      for (const tk of Object.keys(tokenTxs)) {
         this.ethNeeds.tokenTxsLastChecked[tk] = now
         this.ethEngine.tokenCheckTransactionsStatus[tk] = 1
-        const tuple: EdgeTransactionsBlockHeightTuple =
-          ethereumNetworkUpdate.tokenTxs[tk]
+        const tuple: EdgeTransactionsBlockHeightTuple = tokenTxs[tk]
         if (tuple.edgeTransactions) {
           for (const tx: EdgeTransaction of tuple.edgeTransactions) {
             this.ethEngine.addTransaction(tk, tx)
@@ -1091,6 +1519,7 @@ export class EthereumNetwork {
           this.ethEngine.walletLocalData.lastTransactionQueryHeight[
             tk
           ] = preUpdateBlockHeight
+          this.ethEngine.walletLocalData.lastTransactionDate[tk] = now
         }
       }
       this.ethEngine.updateOnAddressesChecked()

@@ -61,6 +61,39 @@ export const EtherscanGetTransactions = {
   required: ['result']
 }
 
+export const EtherscanGetInternalTransactions = {
+  type: 'object',
+  properties: {
+    result: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          blockNumber: { type: 'string' },
+          timeStamp: { type: 'string' },
+          hash: { type: 'string' },
+          from: { type: 'string' },
+          to: { type: 'string' },
+          value: { type: 'string' },
+          gas: { type: 'string' },
+          gasUsed: { type: 'string' }
+        },
+        required: [
+          'blockNumber',
+          'timeStamp',
+          'hash',
+          'from',
+          'to',
+          'value',
+          'gas',
+          'gasUsed'
+        ]
+      }
+    }
+  },
+  required: ['result']
+}
+
 export const EtherscanGetTokenTransactions = {
   type: 'object',
   properties: {
@@ -224,6 +257,14 @@ export const BlockChairStatsSchema = {
   required: ['data']
 }
 
+export const AmberdataRpcSchema = {
+  type: 'object',
+  properties: {
+    result: { type: 'string' }
+  },
+  required: ['result']
+}
+
 export const BlockChairAddressSchema = {
   type: 'object',
   properties: {
@@ -369,36 +410,119 @@ export const AlethioAccountsTokenTransferSchema = {
   required: ['data', 'links', 'meta']
 }
 
-export const AlethioAccountsTxSchema = {
+export const AmberdataAccountsTxSchema = {
   type: 'object',
   properties: {
-    data: {
+    payload: {
       type: 'object',
       properties: {
-        attributes: {
-          type: 'object',
-          properties: {
-            txHash: { type: 'string' },
-            value: { type: 'string' },
-            fee: { type: 'string' },
-            msgGasLimit: { type: 'string' },
-            txGasPrice: { type: 'string' },
-            txGasUsed: { type: 'number' },
-            msgError: { type: 'boolean' }
-          },
-          required: [
-            'txHash',
-            'value',
-            'fee',
-            'msgGasLimit',
-            'txGasPrice',
-            'txGasUsed',
-            'msgError'
-          ]
+        records: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              hash: { type: 'string' },
+              timestamp: { type: 'string' },
+              blockNumber: { type: 'string' },
+              value: { type: 'string' },
+              fee: { type: 'string' },
+              gasLimit: { type: 'string' },
+              gasPrice: { type: 'string' },
+              gasUsed: { type: 'string' },
+              cumulativeGasUsed: { type: 'string' },
+              from: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    address: { type: 'string' }
+                  },
+                  required: ['address']
+                }
+              },
+              to: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    address: { type: 'string' }
+                  },
+                  required: ['address']
+                }
+              }
+            },
+            required: [
+              'hash',
+              'timestamp',
+              'blockNumber',
+              'value',
+              'fee',
+              'gasLimit',
+              'gasPrice',
+              'gasUsed',
+              'cumulativeGasUsed',
+              'from',
+              'to'
+            ]
+          }
         }
       },
-      required: ['attributes']
+      required: ['records']
     }
   },
-  required: ['data']
+  required: ['payload']
+}
+
+export const AmberdataAccountsFuncsSchema = {
+  type: 'object',
+  properties: {
+    payload: {
+      type: 'object',
+      properties: {
+        records: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              transactionHash: { type: 'string' },
+              timestamp: { type: 'number' },
+              blockNumber: { type: 'string' },
+              value: { type: 'string' },
+              initialGas: { type: 'string' },
+              leftOverGas: { type: 'string' },
+              from: {
+                type: 'object',
+                properties: {
+                  address: { type: 'string' }
+                },
+                required: ['address']
+              },
+              to: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    address: { type: 'string' }
+                  },
+                  required: ['address']
+                }
+              }
+            },
+            required: [
+              'transactionHash',
+              'timestamp',
+              'blockNumber',
+              'value',
+              'initialGas',
+              'leftOverGas',
+              'from',
+              'to'
+            ]
+          }
+        }
+      },
+      required: ['records']
+    }
+  },
+  required: ['payload']
 }

@@ -15,6 +15,7 @@ import {
   type EdgeFreshAddress,
   type EdgeGetTransactionsOptions,
   type EdgeIo,
+  type EdgeLog,
   type EdgeMetaToken,
   type EdgeSpendInfo,
   type EdgeTransaction,
@@ -68,6 +69,7 @@ class CurrencyEngine {
   timers: any
   walletId: string
   io: EdgeIo
+  log: EdgeLog
   otherData: Object
 
   constructor(
@@ -80,6 +82,7 @@ class CurrencyEngine {
 
     this.currencyPlugin = currencyPlugin
     this.io = currencyPlugin.io
+    this.log = opts.log
     this.engineOn = false
     this.addressesChecked = false
     this.tokenCheckBalanceStatus = {}
@@ -144,7 +147,7 @@ class CurrencyEngine {
 
   async loadTransactions() {
     if (this.transactionsLoaded) {
-      console.log('Transactions already loaded')
+      this.log('Transactions already loaded')
       return
     }
     this.transactionsLoaded = true
@@ -330,6 +333,8 @@ class CurrencyEngine {
       const transactionsArray = this.transactionList[currencyCode]
       const edgeTx = transactionsArray[idx]
 
+      const { otherParams: otherParamsOld = {} } = edgeTx
+      const { otherParams: otherParamsNew = {} } = edgeTransaction
       if (
         // if something in the transaction has changed?
         edgeTx.blockHeight < edgeTransaction.blockHeight ||
@@ -337,8 +342,7 @@ class CurrencyEngine {
         (edgeTx.blockHeight === edgeTransaction.blockHeight &&
           (edgeTx.networkFee !== edgeTransaction.networkFee ||
             edgeTx.nativeAmount !== edgeTransaction.nativeAmount ||
-            edgeTx.otherParams.lastSeenTime !==
-              edgeTransaction.otherParams.lastSeenTime ||
+            otherParamsOld.lastSeenTime !== otherParamsNew.lastSeenTime ||
             edgeTx.date !== edgeTransaction.date))
       ) {
         // If a spend transaction goes from unconfirmed to dropped or confirmed,
@@ -409,7 +413,8 @@ class CurrencyEngine {
       for (let i = 0; i < this.transactionList[currencyCode].length; i++) {
         const tx = this.transactionList[currencyCode][i]
         if (tx.blockHeight === 0) {
-          const lastSeen = tx.otherParams.lastSeenTime
+          const { otherParams = {} } = tx
+          const lastSeen = otherParams.lastSeenTime
           if (dateNow - lastSeen > DROPPED_TX_TIME_GAP) {
             // droppedTxIndices.push(i)
             tx.blockHeight = -1
@@ -573,12 +578,6 @@ class CurrencyEngine {
     this.currencyEngineCallbacks.onAddressesChecked(totalStatus)
   }
 
-  log(...text: Array<any>) {
-    text[0] = `${this.walletId.slice(0, 5)}: ${text[0].toString()}`
-    console.log(...text)
-    this.io.console.info(...text)
-  }
-
   async startEngine() {
     this.addToLoop('saveWalletLoop', SAVE_DATASTORE_MILLISECONDS)
   }
@@ -644,6 +643,9 @@ class CurrencyEngine {
 
   disableTokensSync(tokens: Array<string>) {
     for (const token of tokens) {
+      if (token === this.currencyInfo.currencyCode) {
+        continue
+      }
       const index = this.walletLocalData.enabledTokens.indexOf(token)
       if (index !== -1) {
         this.walletLocalData.enabledTokens.splice(index, 1)

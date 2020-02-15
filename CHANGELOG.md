@@ -1,5 +1,43 @@
 # edge-currency-accountbased
 
+# 0.6.5 (2020-02-06)
+
+- EOS - Add Greymass Fuel
+
+# 0.6.4 (2020-01-22)
+
+- Add ETH internal transaction support
+
+# 0.6.3 (2020-01-06)
+
+- Add ETHBNT
+
+# 0.6.2 (2020-01-01)
+
+- Upgrade to edge-core-js v0.16.17
+- Upgrade devDependencies
+
+# 0.6.1 (2019-12-31)
+
+- Fix missing parent currency code from enabledTokens
+
+# 0.6.0 (2019-12-18)
+
+- Add Amberdata support
+- RBTC fixes
+- Add 'xrp-ledger:' prefix support
+
+# 0.5.9 (2019-12-06)
+
+- Fix nonce query to save nonce as string.
+- Add try/catch to checkAndUpdate
+- Ensure ETH is checked for balance and txs
+
+# 0.5.8 (2019-12-05)
+
+- Update Tezos explorer and RPC nodes
+- Optimize multiple API support for ETH
+
 # 0.5.7 (2019-12-03)
 
 - Add CDAI
