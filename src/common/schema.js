@@ -84,6 +84,12 @@ export const MakeSpendSchema = {
         },
         required: ['publicAddress']
       }
+    },
+    otherParams: {
+      type: 'object',
+      properties: {
+        txOptions: { type: 'object' }
+      }
     }
   },
   required: ['spendTargets']
