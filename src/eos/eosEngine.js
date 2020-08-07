@@ -17,6 +17,7 @@ import { Api, JsonRpc, RpcError } from 'eosjs'
 import EosApi from 'eosjs-api'
 import { JsSignatureProvider } from 'eosjs/dist/eosjs-jssig'
 import { convertLegacyPublicKeys } from 'eosjs/dist/eosjs-numeric'
+import parse from 'url-parse'
 
 import { CurrencyEngine } from '../common/engine.js'
 import {
@@ -454,6 +455,12 @@ export class EosEngine extends CurrencyEngine {
             server => async () => {
               const url = server + params[0]
               const result = await eosConfig.fetch(url)
+              const parsedUrl = parse(url, {}, true)
+              if (!result.ok) {
+                throw new Error(
+                  `The server returned error code ${result.status} for ${parsedUrl.hostname}`
+                )
+              }
               return { server, result }
             }
           )
@@ -862,6 +869,8 @@ export class EosEngine extends CurrencyEngine {
     if (this.walletInfo.keys.eosKey) {
       keyProvider.push(this.walletInfo.keys.eosKey)
     }
+    // usage of eosOwnerKey must be protected by conditional
+    // checking for its existence
     if (this.walletInfo.keys.eosOwnerKey) {
       keyProvider.push(this.walletInfo.keys.eosOwnerKey)
     }
@@ -907,6 +916,8 @@ export class EosEngine extends CurrencyEngine {
 
   getDisplayPrivateSeed() {
     let out = ''
+    // usage of eosOwnerKey must be protected by conditional
+    // checking for its existence
     if (this.walletInfo.keys && this.walletInfo.keys.eosOwnerKey) {
       out += 'owner key\n' + this.walletInfo.keys.eosOwnerKey + '\n\n'
     }

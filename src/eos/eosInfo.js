@@ -9,11 +9,7 @@ import { type EosSettings } from './eosTypes.js'
 const otherSettings: EosSettings = {
   eosActivationServers: ['https://eos-pay-sf2.edgesecure.co'],
   eosFuelServers: ['https://eos.greymass.com'],
-  eosHyperionNodes: [
-    'https://mainnet.eosn.io',
-    'https://api.eossweden.org',
-    'https://mainnet.eosn.io'
-  ],
+  eosHyperionNodes: ['https://api.eossweden.org', 'https://mainnet.eosn.io'],
   eosNodes: [
     'https://api.redpacketeos.com',
     'https://api.eoseoul.io',
@@ -71,7 +67,7 @@ export const currencyInfo: EdgeCurrencyInfo = {
   // Basic currency information:
   currencyCode: 'EOS',
   displayName: 'EOS',
-  pluginName: 'eos',
+  pluginId: 'eos',
   walletType: 'wallet:eos',
 
   defaultSettings,

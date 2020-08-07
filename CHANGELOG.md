@@ -1,5 +1,94 @@
 # edge-currency-accountbased
 
+# 0.7.14 (2020-07-12)
+
+- FIO fix domain reg url
+
+# 0.7.13 (2020-07-10)
+
+- Add get domains method to FIO plugin
+- FIO fallback ref mode
+- Add fee strings to ethEngine makeSpend() return value
+
+# 0.7.12 (2020-07-05)
+
+- Add Compound ERC20 token (COMP)
+
+# 0.7.11 (2020-06-25)
+
+- Update FIO apiUrls
+
+# 0.7.10 (2020-06-23)
+
+- Categorize servers by rpc and etherscan
+
+# 0.7.9 (2020-06-05)
+
+- Fix case where a FIO address could appear associated with two FIO wallets
+
+# 0.7.8 (2020-06-04)
+
+- Add etherclusterApiServers[] to rskInfo.js
+- Add custom FIO domain support
+- Add FIO address renewal support
+
+# 0.7.6 (2020-05-21)
+
+- Tezos - Add makeMutex to wrap makeSpend() to avoid entering it more than once
+
+# 0.7.5 (2020-05-14)
+
+- Refactor EOS plugin to remove owner key to support importing wallets
+- Add Ethereum Classic support
+- Remove own receive address from Tezos makeSpend
+
+# 0.7.4 (2020-04-28)
+
+- Refactor ETH and RSK to use common code
+- FIO performance improvements
+
+# 0.7.3 (2020-04-22)
+
+- isAccountAvailable() renamed to doesAccountExist()
+
+# 0.7.2 (2020-04-17)
+
+- Add cleaners v0.2.0 type checking
+- Fix duplicate FIO address after registration
+- Reprioritize EOS Hyperion nodes to resolve transaction history view issue
+
+# 0.7.1 (2020-04-07)
+
+- Add TPID to FIO requests
+- Fix Max Sends
+- Updated fioInfo.js to mainnet
+
+# 0.7.0 (2020-04-06)
+
+- Add FIO
+
+# 0.6.10 (2020-04-06)
+
+- Import EOS private key
+- Fix XLM transaction history not showing
+
+# 0.6.9 (2020-03-23)
+
+- Remove FIO codebase, accidentally included in v0.6.8.
+
+# 0.6.8 (2020-03-20)
+
+- Add MET token
+
+# 0.6.7 (2020-03-06)
+
+- Add response error checking to fetch() calls
+- Fixed crash when Etherscan API returned text rather than a number by adding decimal and hex regex to response validation
+
+# 0.6.6 (2020-02-13)
+
+- EOS - Revert fetch update to fix syncing
+
 # 0.6.5 (2020-02-06)
 
 - EOS - Add Greymass Fuel

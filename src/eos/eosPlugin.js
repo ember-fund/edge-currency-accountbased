@@ -21,6 +21,7 @@ import ecc from 'eosjs-ecc'
 
 import { CurrencyPlugin } from '../common/plugin.js'
 import { getDenomInfo, getEdgeInfoServer } from '../common/utils.js'
+import { getFetchCors } from '../react-native-io.js'
 import { EosEngine } from './eosEngine'
 import { currencyInfo } from './eosInfo.js'
 
@@ -63,6 +64,21 @@ export class EosPlugin extends CurrencyPlugin {
     this.eosServer = EosApi(eosConfig)
   }
 
+  async importPrivateKey(privateKey: string): Promise<Object> {
+    const strippedPrivateKey = privateKey.replace(/ /g, '') // should be in WIF format
+    if (strippedPrivateKey.length !== 51) {
+      throw new Error('Private key wrong length')
+    }
+    if (!ecc.isValidPrivate(strippedPrivateKey)) {
+      throw new Error('Invalid private key')
+    }
+    return {
+      // best practice not to import owner key, only active
+      // note that signing is done by active key (eosKey, not eosOwnerKey)
+      eosKey: strippedPrivateKey // active private key
+    }
+  }
+
   async createPrivateKey(walletType: string): Promise<Object> {
     const type = walletType.replace('wallet:', '')
 
@@ -72,7 +88,7 @@ export class EosPlugin extends CurrencyPlugin {
       // Multiple keys can be created and stored here. ie. If there is both a mnemonic and key format,
       // Generate and store them here by returning an arbitrary object with them.
       let entropy = Buffer.from(this.io.random(32)).toString('hex')
-      const eosOwnerKey = ecc.seedPrivate(entropy)
+      const eosOwnerKey = ecc.seedPrivate(entropy) // returns WIF format
       entropy = Buffer.from(this.io.random(32)).toString('hex')
       const eosKey = ecc.seedPrivate(entropy)
       return { eosOwnerKey, eosKey }
@@ -91,6 +107,8 @@ export class EosPlugin extends CurrencyPlugin {
       // const publicKey = deriveAddress(walletInfo.keys.eosKey)
       const publicKey = ecc.privateToPublic(walletInfo.keys.eosKey)
       let ownerPublicKey
+      // usage of eosOwnerKey must be protected by conditional
+      // checking for its existence
       if (walletInfo.keys.eosOwnerKey) {
         ownerPublicKey = ecc.privateToPublic(walletInfo.keys.eosOwnerKey)
       }
@@ -148,13 +166,12 @@ export class EosPlugin extends CurrencyPlugin {
 
 export function makeEosPlugin(opts: EdgeCorePluginOptions): EdgeCurrencyPlugin {
   const { io, log } = opts
-  const { fetchCors = io.fetch } = io
+  const fetch = getFetchCors(opts)
 
   let toolsPromise: Promise<EosPlugin>
   function makeCurrencyTools(): Promise<EosPlugin> {
     if (toolsPromise != null) return toolsPromise
-    const { fetchCors = io.fetch } = io
-    toolsPromise = Promise.resolve(new EosPlugin(io, fetchCors))
+    toolsPromise = Promise.resolve(new EosPlugin(io, fetch))
     return toolsPromise
   }
 
@@ -163,7 +180,7 @@ export function makeEosPlugin(opts: EdgeCorePluginOptions): EdgeCurrencyPlugin {
     opts: EdgeCurrencyEngineOptions
   ): Promise<EdgeCurrencyEngine> {
     const tools = await makeCurrencyTools()
-    const currencyEngine = new EosEngine(tools, walletInfo, opts, fetchCors)
+    const currencyEngine = new EosEngine(tools, walletInfo, opts, fetch)
     await currencyEngine.loadEngine(tools, walletInfo, opts)
 
     currencyEngine.otherData = currencyEngine.walletLocalData.otherData
@@ -193,7 +210,7 @@ export function makeEosPlugin(opts: EdgeCorePluginOptions): EdgeCurrencyPlugin {
       const eosPaymentServer =
         currencyInfo.defaultSettings.otherSettings.eosActivationServers[0]
       const uri = `${eosPaymentServer}/api/v1/getSupportedCurrencies`
-      const response = await fetchCors(uri)
+      const response = await fetch(uri)
       if (!response.ok) {
         throw new Error(`Error ${response.status} while fetching ${uri}`)
       }
@@ -203,7 +220,7 @@ export function makeEosPlugin(opts: EdgeCorePluginOptions): EdgeCurrencyPlugin {
       try {
         const infoServer = getEdgeInfoServer()
         const uri = `${infoServer}/v1/eosPrices`
-        const response = await fetchCors(uri)
+        const response = await fetch(uri)
         if (!response.ok) {
           throw new Error(`Error ${response.status} while fetching ${uri}`)
         }

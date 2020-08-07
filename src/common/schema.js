@@ -1,6 +1,4 @@
-/**
- * Created by paul on 8/27/17.
- */
+import { asArray, asObject, asOptional, asString } from 'cleaners'
 
 export const CurrencyInfoSchema = {
   type: 'object',
@@ -95,13 +93,45 @@ export const MakeSpendSchema = {
   required: ['spendTargets']
 }
 
-export const CustomTokenSchema = {
-  type: 'object',
-  properties: {
-    currencyCode: { type: 'string' },
-    currencyName: { type: 'string' },
-    multiplier: { type: 'string' },
-    contractAddress: { type: 'string' }
-  },
-  required: ['currencyCode', 'currencyName', 'multiplier', 'contractAddress']
+export const asCurrencyCodeOptions = asObject({
+  currencyCode: asOptional(asString)
+})
+
+/**
+ * Does the same tests that the old JSON schema used to do,
+ * but with better error reporting.
+ */
+export function checkEdgeSpendInfo(raw: any): void {
+  try {
+    asPartialSpendInfo(raw)
+  } catch (error) {
+    throw new TypeError('Invalid EdgeSpendInfo: ' + error.message)
+  }
 }
+
+export function checkCustomToken(raw: any): void {
+  try {
+    asCustomToken(raw)
+  } catch (error) {
+    throw new TypeError('Invalid CustomToken: ' + error.message)
+  }
+}
+
+const asPartialSpendInfo = asObject({
+  currencyCode: asOptional(asString),
+  networkFeeOption: asOptional(asString),
+  spendTargets: asArray(
+    asObject({
+      currencyCode: asOptional(asString),
+      publicAddress: asString,
+      nativeAmount: asOptional(asString, '0')
+    })
+  )
+})
+
+const asCustomToken = asObject({
+  currencyCode: asString,
+  currencyName: asString,
+  multiplier: asString,
+  contractAddress: asString
+})

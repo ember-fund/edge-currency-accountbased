@@ -1,6 +1,6 @@
 export default [
   {
-    pluginName: 'binance',
+    pluginId: 'binance',
     WALLET_TYPE: 'wallet:binance',
     'Test Currency code': 'BNB',
     key: [
@@ -142,7 +142,7 @@ export default [
     }
   },
   {
-    pluginName: 'stellar',
+    pluginId: 'stellar',
     WALLET_TYPE: 'wallet:stellar',
     'Test Currency code': 'XLM',
     key: [
@@ -289,7 +289,7 @@ export default [
     }
   },
   {
-    pluginName: 'ripple',
+    pluginId: 'ripple',
     WALLET_TYPE: 'wallet:ripple',
     'Test Currency code': 'XRP',
     key: [
@@ -427,7 +427,7 @@ export default [
     }
   },
   {
-    pluginName: 'ethereum',
+    pluginId: 'ethereum',
     WALLET_TYPE: 'wallet:ethereum',
     'Test Currency code': 'ETH',
     key: [
@@ -464,7 +464,9 @@ export default [
       40,
       238
     ],
-    xpub: '0x466d506cd7fbcd29a06015da03f0de814df050ee',
+    mnemonic:
+      'room soda device label bicycle hill fork nest lion knee purpose hen',
+    xpub: '0x21d45fd06e291c49abfa135460de827b6579cef5',
     key_length: 64,
     'invalid key name': {
       type: 'wallet:ethereum',
@@ -564,7 +566,7 @@ export default [
     }
   },
   {
-    pluginName: 'rsk',
+    pluginId: 'rsk',
     WALLET_TYPE: 'wallet:rsk',
     'Test Currency code': 'RBTC',
     key: [
@@ -703,7 +705,7 @@ export default [
     }
   },
   {
-    pluginName: 'fio',
+    pluginId: 'fio',
     WALLET_TYPE: 'wallet:fio',
     'Test Currency code': 'FIO',
     key: [
