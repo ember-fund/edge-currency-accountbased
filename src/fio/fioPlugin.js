@@ -14,8 +14,10 @@ import {
 } from 'edge-core-js/types'
 
 import { CurrencyPlugin } from '../common/plugin.js'
-import { getDenomInfo } from '../common/utils.js'
+import { asyncWaterfall, getDenomInfo, shuffleArray } from '../common/utils'
+import { FIO_REG_API_ENDPOINTS } from './fioConst.js'
 import { FioEngine } from './fioEngine'
+import { fioApiErrorCodes, FioError } from './fioError.js'
 import { currencyInfo } from './fioInfo.js'
 
 const FIO_CURRENCY_CODE = 'FIO'
@@ -112,20 +114,65 @@ export function makeFioPlugin(opts: EdgeCorePluginOptions): EdgeCurrencyPlugin {
     fioRegApiToken = FIO_REG_SITE_API_KEY
   } = initOptions
 
-  const connection = new FIOSDK(
-    '',
-    '',
-    currencyInfo.defaultSettings.apiUrls[0],
-    fetchCors,
-    undefined,
-    tpid
-  )
-
   let toolsPromise: Promise<FioPlugin>
   function makeCurrencyTools(): Promise<FioPlugin> {
     if (toolsPromise != null) return toolsPromise
     toolsPromise = Promise.resolve(new FioPlugin(io))
     return toolsPromise
+  }
+
+  async function multicastServers(
+    actionName: string,
+    params?: any
+  ): Promise<any> {
+    const res = await asyncWaterfall(
+      shuffleArray(
+        currencyInfo.defaultSettings.apiUrls.map(apiUrl => async () => {
+          let out
+
+          const connection = new FIOSDK(
+            '',
+            '',
+            apiUrl,
+            fetchCors,
+            undefined,
+            tpid
+          )
+
+          try {
+            out = await connection.genericAction(actionName, params)
+          } catch (e) {
+            // handle FIO API error
+            if (e.errorCode && fioApiErrorCodes.indexOf(e.errorCode) > -1) {
+              out = {
+                isError: true,
+                data: {
+                  code: e.errorCode,
+                  message: e.message,
+                  json: e.json,
+                  list: e.list
+                }
+              }
+            } else {
+              throw e
+            }
+          }
+
+          return out
+        })
+      )
+    )
+
+    if (res.isError) {
+      const error = new FioError(res.errorMessage)
+      error.json = res.data.json
+      error.list = res.data.list
+      error.errorCode = res.data.code
+
+      throw error
+    }
+
+    return res
   }
 
   async function makeCurrencyEngine(
@@ -149,9 +196,6 @@ export function makeFioPlugin(opts: EdgeCorePluginOptions): EdgeCurrencyPlugin {
     if (!currencyEngine.otherData.highestTxHeight) {
       currencyEngine.otherData.highestTxHeight = 0
     }
-    if (!currencyEngine.otherData.feeTransactions) {
-      currencyEngine.otherData.feeTransactions = []
-    }
     if (!currencyEngine.otherData.fioAddresses) {
       currencyEngine.otherData.fioAddresses = []
     }
@@ -169,7 +213,11 @@ export function makeFioPlugin(opts: EdgeCorePluginOptions): EdgeCurrencyPlugin {
       chainCode: string,
       tokenCode: string
     ) {
-      return connection.getPublicAddress(fioAddress, chainCode, tokenCode)
+      return multicastServers('getPublicAddress', {
+        fioAddress,
+        chainCode,
+        tokenCode
+      })
     },
     async isFioAddressValid(fioAddress: string): Promise<boolean> {
       try {
@@ -178,14 +226,16 @@ export function makeFioPlugin(opts: EdgeCorePluginOptions): EdgeCurrencyPlugin {
         return false
       }
     },
-    async validateAccount(fioAddress: string): Promise<boolean> {
+    async validateAccount(fioName: string): Promise<boolean> {
       try {
-        if (!FIOSDK.isFioAddressValid(fioAddress)) return false
+        if (!FIOSDK.isFioAddressValid(fioName)) return false
       } catch (e) {
         return false
       }
       try {
-        const isAvailableRes = await connection.isAvailable(fioAddress)
+        const isAvailableRes = await multicastServers('isAvailable', {
+          fioName
+        })
 
         return !isAvailableRes.is_registered
       } catch (e) {
@@ -193,14 +243,16 @@ export function makeFioPlugin(opts: EdgeCorePluginOptions): EdgeCurrencyPlugin {
         return false
       }
     },
-    async doesAccountExist(fioAddress: string): Promise<boolean> {
+    async doesAccountExist(fioName: string): Promise<boolean> {
       try {
-        if (!FIOSDK.isFioAddressValid(fioAddress)) return false
+        if (!FIOSDK.isFioAddressValid(fioName)) return false
       } catch (e) {
         return false
       }
       try {
-        const isAvailableRes = await connection.isAvailable(fioAddress)
+        const isAvailableRes = await multicastServers('isAvailable', {
+          fioName
+        })
 
         return isAvailableRes.is_registered
       } catch (e) {
@@ -226,7 +278,7 @@ export function makeFioPlugin(opts: EdgeCorePluginOptions): EdgeCurrencyPlugin {
       }
       try {
         const result = await fetchCors(
-          `${currencyInfo.defaultSettings.fioRegApiUrl}${currencyInfo.defaultSettings.fioRegApiEndPoints.buyAddress}`,
+          `${currencyInfo.defaultSettings.fioRegApiUrl}${FIO_REG_API_ENDPOINTS.buyAddress}`,
           {
             method: 'POST',
             headers,
@@ -257,7 +309,7 @@ export function makeFioPlugin(opts: EdgeCorePluginOptions): EdgeCurrencyPlugin {
       if (!ref) ref = currencyInfo.defaultSettings.defaultRef
       try {
         const result = await fetchCors(
-          `${currencyInfo.defaultSettings.fioRegApiUrl}${currencyInfo.defaultSettings.fioRegApiEndPoints.getDomains}/${ref}`,
+          `${currencyInfo.defaultSettings.fioRegApiUrl}${FIO_REG_API_ENDPOINTS.getDomains}/${ref}`,
           {
             method: 'GET'
           }
