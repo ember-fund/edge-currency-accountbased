@@ -82,6 +82,7 @@ export class EthereumEngine extends CurrencyEngine {
       gasLimit: ''
     }
     this.fetchCors = fetchCors
+    this.log(`tester tester`)
   }
 
   updateBalance(tk: string, balance: string) {
