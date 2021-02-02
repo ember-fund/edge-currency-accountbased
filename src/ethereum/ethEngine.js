@@ -7,6 +7,7 @@ import { bns } from 'biggystring'
 import {
   type EdgeCurrencyEngineOptions,
   type EdgeCurrencyInfo,
+  type EdgeFetchFunction,
   type EdgeSpendInfo,
   type EdgeTransaction,
   type EdgeWalletInfo,
@@ -20,7 +21,6 @@ import ethWallet from 'ethereumjs-wallet'
 import { CurrencyEngine } from '../common/engine.js'
 import {
   addHexPrefix,
-  asyncWaterfall,
   bufToHex,
   getEdgeInfoServer,
   getOtherParams,
@@ -41,24 +41,29 @@ import {
   type EthereumFeesGasPrice,
   type EthereumInitOptions,
   type EthereumTxOtherParams,
-  type EthereumWalletOtherData
+  type EthereumWalletOtherData,
+  type LastEstimatedGasLimit
 } from './ethTypes.js'
 
 const UNCONFIRMED_TRANSACTION_POLL_MILLISECONDS = 3000
 const NETWORKFEES_POLL_MILLISECONDS = 60 * 10 * 1000 // 10 minutes
 const WEI_MULTIPLIER = 100000000
+const GAS_PRICE_SANITY_CHECK = 30000 // 3000 Gwei (ethgasstation api reports gas prices with additional decimal place)
 
 export class EthereumEngine extends CurrencyEngine {
   otherData: EthereumWalletOtherData
   initOptions: EthereumInitOptions
   ethNetwork: EthereumNetwork
+  lastEstimatedGasLimit: LastEstimatedGasLimit
+  fetchCors: EdgeFetchFunction
 
   constructor(
     currencyPlugin: EthereumPlugin,
     walletInfo: EdgeWalletInfo,
     initOptions: EthereumInitOptions,
     opts: EdgeCurrencyEngineOptions,
-    currencyInfo: EdgeCurrencyInfo
+    currencyInfo: EdgeCurrencyInfo,
+    fetchCors: EdgeFetchFunction
   ) {
     super(currencyPlugin, walletInfo, opts)
     const { pluginId } = this.currencyInfo
@@ -71,6 +76,12 @@ export class EthereumEngine extends CurrencyEngine {
     this.currencyPlugin = currencyPlugin
     this.initOptions = initOptions
     this.ethNetwork = new EthereumNetwork(this, this.currencyInfo)
+    this.lastEstimatedGasLimit = {
+      publicAddress: '',
+      contractAddress: '',
+      gasLimit: ''
+    }
+    this.fetchCors = fetchCors
   }
 
   updateBalance(tk: string, balance: string) {
@@ -220,19 +231,19 @@ export class EthereumEngine extends CurrencyEngine {
         let fastest = jsonObj.fastest
 
         // Sanity checks
-        if (safeLow < 1 || safeLow > 3000) {
+        if (safeLow < 1 || safeLow > GAS_PRICE_SANITY_CHECK) {
           this.log('Invalid safeLow value from EthGasStation')
           return
         }
-        if (average < 1 || average > 3000) {
+        if (average < 1 || average > GAS_PRICE_SANITY_CHECK) {
           this.log('Invalid average value from EthGasStation')
           return
         }
-        if (fast < 1 || fast > 3000) {
+        if (fast < 1 || fast > GAS_PRICE_SANITY_CHECK) {
           this.log('Invalid fastest value from EthGasStation')
           return
         }
-        if (fastest < 1 || fastest > 3000) {
+        if (fastest < 1 || fastest > GAS_PRICE_SANITY_CHECK) {
           this.log('Invalid fastest value from EthGasStation')
           return
         }
@@ -322,7 +333,7 @@ export class EthereumEngine extends CurrencyEngine {
       throw new TypeError(`Invalid ${this.currencyInfo.pluginId} address`)
     }
 
-    const data =
+    let data =
       spendTarget.otherParams != null ? spendTarget.otherParams.data : undefined
 
     const miningFees = calcMiningFee(
@@ -332,29 +343,12 @@ export class EthereumEngine extends CurrencyEngine {
     )
     const { gasPrice, useDefaults } = miningFees
     let { gasLimit } = miningFees
+    const defaultGasLimit = gasLimit
     let nativeAmount = edgeSpendInfo.spendTargets[0].nativeAmount
-    if (currencyCode === this.currencyInfo.currencyCode && useDefaults) {
-      const estimateGasParams = {
-        to: publicAddress,
-        gas: '0xffffff',
-        value: bns.add(nativeAmount, '0', 16)
-      }
-      try {
-        const funcs = []
-        funcs.push(async () => {
-          return this.ethNetwork.multicastServers(
-            'eth_estimateGas',
-            estimateGasParams
-          )
-        })
-        const result = await asyncWaterfall(funcs, 5000)
-        gasLimit = bns.add(result.result, '0')
-      } catch (err) {
-        this.log(err)
-      }
-    }
 
     let otherParamsOut: Object = {}
+    let contractAddress
+    let value
     if (currencyCode === this.currencyInfo.currencyCode) {
       const ethParams: EthereumTxOtherParams = {
         from: [this.walletLocalData.publicKey],
@@ -368,8 +362,8 @@ export class EthereumEngine extends CurrencyEngine {
         data: data
       }
       otherParamsOut = { ...otherParams, ...ethParams }
+      value = bns.add(nativeAmount, '0', 16)
     } else {
-      let contractAddress = ''
       if (data) {
         contractAddress = publicAddress
       } else {
@@ -381,6 +375,7 @@ export class EthereumEngine extends CurrencyEngine {
         }
 
         contractAddress = tokenInfo.contractAddress
+        value = '0x0'
       }
 
       const ethParams: EthereumTxOtherParams = {
@@ -396,6 +391,82 @@ export class EthereumEngine extends CurrencyEngine {
       }
       otherParamsOut = { ...otherParams, ...ethParams }
     }
+
+    // If the recipient or contractaddress has changed from previous makeSpend(), calculate the gasLimit
+    if (
+      useDefaults &&
+      (this.lastEstimatedGasLimit.publicAddress !== publicAddress ||
+        this.lastEstimatedGasLimit.contractAddress !== contractAddress ||
+        this.lastEstimatedGasLimit.gasLimit === '')
+    ) {
+      if (!data) {
+        const dataArray = abi.simpleEncode(
+          'transfer(address,uint256):(uint256)',
+          contractAddress || publicAddress,
+          value
+        )
+        data = '0x' + Buffer.from(dataArray).toString('hex')
+      }
+
+      const estimateGasParams = {
+        to: contractAddress || publicAddress,
+        gas: '0xffffff',
+        value,
+        data
+      }
+      try {
+        // Determine if recipient is a normal or contract address
+        const getCodeResult = await this.ethNetwork.multicastServers(
+          'eth_getCode',
+          [contractAddress || publicAddress, 'latest']
+        )
+
+        if (bns.gt(parseInt(getCodeResult.result, 16).toString(), '0')) {
+          const estimateGasResult = await this.ethNetwork.multicastServers(
+            'eth_estimateGas',
+            [estimateGasParams]
+          )
+          // Check if successful http response was actually an error
+          if (estimateGasResult.error != null) {
+            this.lastEstimatedGasLimit.gasLimit = ''
+            throw new Error(
+              'Successful estimateGasResult response object included an error'
+            )
+          }
+          gasLimit = bns.add(
+            parseInt(estimateGasResult.result.result, 16).toString(),
+            '0'
+          )
+
+          // Over estimate gas limit for token transactions
+          if (currencyCode !== this.currencyInfo.currencyCode) {
+            gasLimit = bns.mul(gasLimit, '2')
+          }
+        } else {
+          gasLimit = '21000'
+        }
+
+        // Sanity check calculated value
+        if (bns.lt(gasLimit, '21000')) {
+          gasLimit = defaultGasLimit
+          this.lastEstimatedGasLimit.gasLimit = ''
+          throw new Error('Calculated gasLimit less than minimum')
+        }
+
+        // Save locally to compare for future makeSpend() calls
+        this.lastEstimatedGasLimit = {
+          publicAddress,
+          contractAddress,
+          gasLimit
+        }
+      } catch (err) {
+        this.log(err)
+      }
+    } else if (useDefaults) {
+      // If recipient and contract address are the same from the previous makeSpend(), use the previously calculated gasLimit
+      gasLimit = this.lastEstimatedGasLimit.gasLimit
+    }
+    otherParams.gas = gasLimit
 
     const nativeBalance = this.walletLocalData.totalBalances[
       this.currencyInfo.currencyCode
@@ -415,11 +486,9 @@ export class EthereumEngine extends CurrencyEngine {
       nativeAmount = bns.mul(totalTxAmount, '-1')
     } else {
       parentNetworkFee = nativeNetworkFee
-
+      // Check if there's enough parent currency to pay the transaction fee, and if not return the parent currency code
       if (bns.gt(nativeNetworkFee, nativeBalance) && !byPassBalanceCheck) {
-        throw new InsufficientFundsError(
-          `Insufficient ${this.currencyInfo.currencyCode} for transaction fee`
-        )
+        throw new InsufficientFundsError(this.currencyInfo.currencyCode)
       }
       const balanceToken = this.walletLocalData.totalBalances[currencyCode]
       if (bns.gt(nativeAmount, balanceToken) && !byPassBalanceCheck) {

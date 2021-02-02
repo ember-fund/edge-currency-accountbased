@@ -1,5 +1,72 @@
 # edge-currency-accountbased
 
+# 0.7.30 (2020-10-08)
+
+- Add onAddressChanged callback to EOS to inform GUI of new account activation
+
+# 0.7.29 (2020-10-04)
+
+- Add postinstall script to npm package
+
+# 0.7.28 (2020-10-04)
+
+- Replace schema with cleaners for transaction history api calls
+- Add cloudflare rpcServer
+- Only calculate 'data' parameter if using default fees
+- Fix TRANSACTION_STORE_FILE data initialization
+- Fix hex number parsing
+- Pass fetchCors function to amberdata api calls
+- Remove unnecessary log
+- Add postinstall script for node14 dependency compatibility (usb and node-hid)
+- Update cleaners
+
+# 0.7.27 (2020-10-01)
+
+- Add FIO import private key support
+- Fix TLOS block explorer link
+
+# 0.7.25 (2020-09-18)
+
+- Upgrade FIO SDK to v1.1.0
+- Retry failed FIO tx broadcasts
+- Update FIO explorer
+
+# 0.7.24 (2020-09-16)
+
+- Add Telos (TLOS)
+- EOS fixes
+
+# 0.7.23 (2020-09-16)
+
+- FIO register domain
+- FIO check pub address error handling
+
+# 0.7.22 (2020-09-03)
+
+- Added free FIO address link
+- Updated FIO api urls to remove port
+
+# 0.7.21 (2020-09-02)
+
+- Update ETH gas price sanity check values
+
+# 0.7.20 (2020-08-25)
+
+- Add Synthetix ERC20 tokens (SNX, SBTC, and SUSD)
+- Save FIO tx fee between makeSpend() requests to the same address to reduce network calls
+- Pass parent currency code in error when there's insufficient parent currency to pay transaction fee
+- Increase timeout on network-dependent block height test
+
+# 0.7.19 (2020-08-20)
+
+- Use eth_estimategas and eth_getcode to improve ETH and ERC20 token transaction fee estimation
+
+# 0.7.18 (2020-08-12)
+
+- Disable asyncWaterfall for some FIO operations
+- Save numTransactions in localWalletData
+- Add cleaners to Etherscan get tx api responses
+
 # 0.7.17 (2020-08-04)
 
 - FIO checkTransactions algorithm update to page transactions

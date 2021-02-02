@@ -53,6 +53,9 @@ describe(`EOS activation`, function () {
     onTransactionsChanged(transactionList) {
       // console.log('onTransactionsChanged:', transactionList)
       emitter.emit('onTransactionsChanged', transactionList)
+    },
+    onAddressChanged() {
+      emitter.emit('addressChanged')
     }
   }
 
@@ -97,7 +100,7 @@ describe(`EOS activation`, function () {
   it('getActivationCost', async function () {
     this.timeout(10000)
     if (plugin.otherMethods) {
-      const result = await plugin.otherMethods.getActivationCost()
+      const result = await plugin.otherMethods.getActivationCost('EOS')
       const cost = Number(result)
       assert.equal(cost > 0.01, true)
     } else {

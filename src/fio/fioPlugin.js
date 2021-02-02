@@ -2,6 +2,7 @@
 
 import { FIOSDK } from '@fioprotocol/fiosdk'
 import { bns } from 'biggystring'
+import { validateMnemonic } from 'bip39'
 import {
   type EdgeCorePluginOptions,
   type EdgeCurrencyEngine,
@@ -12,6 +13,7 @@ import {
   type EdgeParsedUri,
   type EdgeWalletInfo
 } from 'edge-core-js/types'
+import ecc from 'eosjs-ecc'
 
 import { CurrencyPlugin } from '../common/plugin.js'
 import { asyncWaterfall, getDenomInfo, shuffleArray } from '../common/utils'
@@ -22,7 +24,7 @@ import { currencyInfo } from './fioInfo.js'
 
 const FIO_CURRENCY_CODE = 'FIO'
 const FIO_TYPE = 'fio'
-const FIO_REG_SITE_API_KEY = 'qeP9KTU30BYhonbmF7BrNzxPUye7vV6QdwrJbcMspVlE'
+const FIO_REG_SITE_API_KEY = ''
 
 type DomainItem = { domain: string, free: boolean }
 
@@ -37,6 +39,38 @@ export class FioPlugin extends CurrencyPlugin {
 
   constructor(io: EdgeIo) {
     super(io, FIO_TYPE, currencyInfo)
+  }
+
+  async importPrivateKey(userInput: string): Promise<Object> {
+    const { pluginId } = this.currencyInfo
+    const keys = {}
+    if (/[0-9a-zA-Z]{51}$/.test(userInput)) {
+      if (!ecc.isValidPrivate(userInput)) {
+        throw new Error('Invalid private key')
+      }
+
+      keys.fioKey = userInput
+    } else {
+      // it looks like a mnemonic, so validate that way:
+      if (!validateMnemonic(userInput)) {
+        // "input" instead of "mnemonic" in case private key
+        // was just the wrong length
+        throw new Error('Invalid input')
+      }
+      const privKeys = await FIOSDK.createPrivateKeyMnemonic(userInput)
+      keys.fioKey = privKeys.fioKey
+      keys.mnemonic = privKeys.mnemonic
+    }
+
+    // Validate the address derivation:
+    const pubKeys = await this.derivePublicKey({
+      type: `wallet:${pluginId}`,
+      id: 'fake',
+      keys
+    })
+    keys.publicKey = pubKeys.publicKey
+
+    return keys
   }
 
   async createPrivateKey(walletType: string): Promise<Object> {
@@ -202,6 +236,9 @@ export function makeFioPlugin(opts: EdgeCorePluginOptions): EdgeCurrencyPlugin {
     if (!currencyEngine.otherData.fioDomains) {
       currencyEngine.otherData.fioDomains = []
     }
+    if (!currencyEngine.otherData.fioRequestsToApprove) {
+      currencyEngine.otherData.fioRequestsToApprove = {}
+    }
 
     const out: EdgeCurrencyEngine = currencyEngine
     return out
@@ -213,11 +250,69 @@ export function makeFioPlugin(opts: EdgeCorePluginOptions): EdgeCurrencyPlugin {
       chainCode: string,
       tokenCode: string
     ) {
-      return multicastServers('getPublicAddress', {
-        fioAddress,
-        chainCode,
-        tokenCode
-      })
+      try {
+        FIOSDK.isFioAddressValid(fioAddress)
+      } catch (e) {
+        throw new FioError(
+          '',
+          400,
+          currencyInfo.defaultSettings.errorCodes.INVALID_FIO_ADDRESS
+        )
+      }
+      try {
+        const isAvailableRes = await multicastServers('isAvailable', {
+          fioName: fioAddress
+        })
+        if (!isAvailableRes.is_registered) {
+          throw new FioError(
+            '',
+            404,
+            currencyInfo.defaultSettings.errorCodes.FIO_ADDRESS_IS_NOT_EXIST
+          )
+        }
+      } catch (e) {
+        if (
+          e.name === 'FioError' &&
+          e.json &&
+          e.json.fields &&
+          e.errorCode === 400
+        ) {
+          e.labelCode =
+            currencyInfo.defaultSettings.errorCodes.INVALID_FIO_ADDRESS
+        }
+
+        throw e
+      }
+      try {
+        const result = await multicastServers('getPublicAddress', {
+          fioAddress,
+          chainCode,
+          tokenCode
+        })
+        if (!result.public_address || result.public_address === '0') {
+          throw new FioError(
+            '',
+            404,
+            currencyInfo.defaultSettings.errorCodes.FIO_ADDRESS_IS_NOT_LINKED
+          )
+        }
+        return result
+      } catch (e) {
+        if (
+          (e.name === 'FioError' &&
+            e.labelCode ===
+              currencyInfo.defaultSettings.errorCodes
+                .FIO_ADDRESS_IS_NOT_LINKED) ||
+          e.errorCode === 404
+        ) {
+          throw new FioError(
+            '',
+            404,
+            currencyInfo.defaultSettings.errorCodes.FIO_ADDRESS_IS_NOT_LINKED
+          )
+        }
+        throw e
+      }
     },
     async isFioAddressValid(fioAddress: string): Promise<boolean> {
       try {
@@ -226,9 +321,16 @@ export function makeFioPlugin(opts: EdgeCorePluginOptions): EdgeCurrencyPlugin {
         return false
       }
     },
-    async validateAccount(fioName: string): Promise<boolean> {
+    async validateAccount(
+      fioName: string,
+      isDomain: boolean = false
+    ): Promise<boolean> {
       try {
-        if (!FIOSDK.isFioAddressValid(fioName)) return false
+        if (isDomain) {
+          if (!FIOSDK.isFioDomainValid(fioName)) return false
+        } else {
+          if (!FIOSDK.isFioAddressValid(fioName)) return false
+        }
       } catch (e) {
         return false
       }
@@ -297,13 +399,6 @@ export function makeFioPlugin(opts: EdgeCorePluginOptions): EdgeCurrencyPlugin {
       } catch (e) {
         return { error: e }
       }
-    },
-    getRegDomainUrl(pubKey: string, isFallback: boolean = false): string {
-      return `${currencyInfo.defaultSettings.fioDomainRegUrl}${
-        isFallback
-          ? currencyInfo.defaultSettings.fallbackRef
-          : currencyInfo.defaultSettings.defaultRef
-      }?publicKey=${pubKey}`
     },
     async getDomains(ref: string = ''): Promise<DomainItem[] | { error: any }> {
       if (!ref) ref = currencyInfo.defaultSettings.defaultRef
