@@ -2,6 +2,8 @@
 
 import { FIOSDK } from '@fioprotocol/fiosdk'
 import { EndPoint } from '@fioprotocol/fiosdk/lib/entities/EndPoint'
+import { Transactions } from '@fioprotocol/fiosdk/lib/transactions/Transactions'
+import { Constants as FioConstants } from '@fioprotocol/fiosdk/lib/utils/constants'
 import { bns } from 'biggystring'
 import {
   type EdgeCurrencyEngineOptions,
@@ -15,33 +17,67 @@ import {
 } from 'edge-core-js/types'
 
 import { CurrencyEngine } from '../common/engine.js'
-import { asyncWaterfall, getDenomInfo, shuffleArray } from '../common/utils'
 import {
-  ACTIONS_SKIP_SWITCH,
+  asyncWaterfall,
+  cleanTxLogs,
+  getDenomInfo,
+  promiseAny,
+  promiseNy,
+  shuffleArray,
+  timeout
+} from '../common/utils'
+import {
   ACTIONS_TO_END_POINT_KEYS,
+  BROADCAST_ACTIONS,
   HISTORY_NODE_ACTIONS,
   HISTORY_NODE_OFFSET
 } from './fioConst.js'
-import {
-  FIO_BLOCK_NUMBER_ERROR_CODE,
-  FIO_CHAIN_INFO_ERROR_CODE,
-  fioApiErrorCodes,
-  FioError
-} from './fioError'
+import { fioApiErrorCodes, FioError } from './fioError'
 import { FioPlugin } from './fioPlugin.js'
 import {
   type FioHistoryNodeAction,
+  type GetFioName,
   asFioHistoryNodeAction,
+  asGetFioName,
   asHistoryResponse
 } from './fioSchema.js'
 
 const ADDRESS_POLL_MILLISECONDS = 10000
 const BLOCKCHAIN_POLL_MILLISECONDS = 15000
 const TRANSACTION_POLL_MILLISECONDS = 10000
+const FEE_ACTION_MAP = {
+  addPublicAddress: {
+    action: 'getFeeForAddPublicAddress',
+    propName: 'fioAddress'
+  },
+  addPublicAddresses: {
+    action: 'getFeeForAddPublicAddress',
+    propName: 'fioAddress'
+  },
+  rejectFundsRequest: {
+    action: 'getFeeForRejectFundsRequest',
+    propName: 'payerFioAddress'
+  },
+  requestFunds: {
+    action: 'getFeeForNewFundsRequest',
+    propName: 'payeeFioAddress'
+  },
+  recordObtData: {
+    action: 'getFeeForRecordObtData',
+    propName: 'payerFioAddress'
+  }
+}
 
 type RecentFioFee = {
   publicAddress: string,
   fee: number
+}
+
+type PreparedTrx = {
+  signatures: string[],
+  compression: number,
+  packed_context_free_data: string,
+  packed_trx: string
 }
 
 export class FioEngine extends CurrencyEngine {
@@ -51,6 +87,8 @@ export class FioEngine extends CurrencyEngine {
   otherMethods: Object
   tpid: string
   recentFioFee: RecentFioFee
+  fioSdk: FIOSDK
+  fioSdkPreparedTrx: FIOSDK
 
   localDataDirty() {
     this.walletLocalDataDirty = true
@@ -69,40 +107,20 @@ export class FioEngine extends CurrencyEngine {
     this.tpid = tpid
     this.recentFioFee = { publicAddress: '', fee: 0 }
 
+    this.fioSdkInit()
+
     this.otherMethods = {
       fioAction: async (actionName: string, params: any): Promise<any> => {
-        const feeActionMap = {
-          addPublicAddress: {
-            action: 'getFeeForAddPublicAddress',
-            propName: 'fioAddress'
-          },
-          addPublicAddresses: {
-            action: 'getFeeForAddPublicAddress',
-            propName: 'fioAddress'
-          },
-          rejectFundsRequest: {
-            action: 'getFeeForRejectFundsRequest',
-            propName: 'payerFioAddress'
-          },
-          requestFunds: {
-            action: 'getFeeForNewFundsRequest',
-            propName: 'payeeFioAddress'
-          },
-          recordObtData: {
-            action: 'getFeeForRecordObtData',
-            propName: 'payerFioAddress'
-          }
-        }
         switch (actionName) {
           case 'addPublicAddresses':
           case 'addPublicAddress':
           case 'requestFunds':
           case 'rejectFundsRequest': {
             const { fee } = await this.multicastServers(
-              feeActionMap[actionName].action,
+              FEE_ACTION_MAP[actionName].action,
               {
-                [feeActionMap[actionName].propName]:
-                  params[feeActionMap[actionName].propName]
+                [FEE_ACTION_MAP[actionName].propName]:
+                  params[FEE_ACTION_MAP[actionName].propName]
               }
             )
             params.maxFee = fee
@@ -110,10 +128,10 @@ export class FioEngine extends CurrencyEngine {
           }
           case 'recordObtData': {
             const { fee } = await this.multicastServers(
-              feeActionMap[actionName].action,
+              FEE_ACTION_MAP[actionName].action,
               {
-                [feeActionMap[actionName].propName]:
-                  params[feeActionMap[actionName].propName]
+                [FEE_ACTION_MAP[actionName].propName]:
+                  params[FEE_ACTION_MAP[actionName].propName]
               }
             )
             params.maxFee = fee
@@ -140,9 +158,10 @@ export class FioEngine extends CurrencyEngine {
             })
             params.maxFee = fee
             const res = await this.multicastServers(actionName, params)
-            const renewedAddress = this.walletLocalData.otherData.fioAddresses.find(
-              ({ name }) => name === params.fioAddress
-            )
+            const renewedAddress =
+              this.walletLocalData.otherData.fioAddresses.find(
+                ({ name }) => name === params.fioAddress
+              )
             if (renewedAddress) {
               renewedAddress.expiration = res.expiration
               this.localDataDirty()
@@ -164,9 +183,10 @@ export class FioEngine extends CurrencyEngine {
                 feeCollected: res.fee_collected
               }
             }
-            const addressAlreadyAdded = this.walletLocalData.otherData.fioAddresses.find(
-              ({ name }) => name === params.fioAddress
-            )
+            const addressAlreadyAdded =
+              this.walletLocalData.otherData.fioAddresses.find(
+                ({ name }) => name === params.fioAddress
+              )
             if (!addressAlreadyAdded) {
               this.walletLocalData.otherData.fioAddresses.push({
                 name: params.fioAddress,
@@ -174,10 +194,7 @@ export class FioEngine extends CurrencyEngine {
               })
               this.localDataDirty()
             }
-            return {
-              expiration: res.expiration,
-              feeCollected: res.fee_collected
-            }
+            return res
           }
           case 'renewFioDomain': {
             const { fee } = await this.multicastServers('getFee', {
@@ -185,17 +202,15 @@ export class FioEngine extends CurrencyEngine {
             })
             params.maxFee = fee
             const res = await this.multicastServers(actionName, params)
-            const renewedDomain = this.walletLocalData.otherData.fioDomains.find(
-              ({ name }) => name === params.fioDomain
-            )
+            const renewedDomain =
+              this.walletLocalData.otherData.fioDomains.find(
+                ({ name }) => name === params.fioDomain
+              )
             if (renewedDomain) {
               renewedDomain.expiration = res.expiration
               this.localDataDirty()
             }
-            return {
-              expiration: res.expiration,
-              feeCollected: res.fee_collected
-            }
+            return res
           }
           case 'registerFioDomain': {
             const { fee } = await this.multicastServers('getFee', {
@@ -210,10 +225,37 @@ export class FioEngine extends CurrencyEngine {
                 tpid
               }
             })
-            return {
-              expiration: res.expiration,
-              feeCollected: res.fee_collected
+            return res
+          }
+          case 'transferFioDomain': {
+            const res = await this.multicastServers(actionName, params)
+            const transferredDomainIndex =
+              this.walletLocalData.otherData.fioDomains.findIndex(
+                ({ name }) => name === params.fioDomain
+              )
+            if (transferredDomainIndex) {
+              this.walletLocalData.otherData.fioDomains.splice(
+                transferredDomainIndex,
+                1
+              )
+              this.localDataDirty()
             }
+            return res
+          }
+          case 'transferFioAddress': {
+            const res = await this.multicastServers(actionName, params)
+            const transferredAddressIndex =
+              this.walletLocalData.otherData.fioAddresses.findIndex(
+                ({ name }) => name === params.fioAddress
+              )
+            if (transferredAddressIndex) {
+              this.walletLocalData.otherData.fioAddresses.splice(
+                transferredAddressIndex,
+                1
+              )
+              this.localDataDirty()
+            }
+            return res
           }
         }
 
@@ -230,7 +272,7 @@ export class FioEngine extends CurrencyEngine {
         return fee
       },
       getFioAddresses: async (): Promise<
-        { name: string, expiration: string }[]
+        Array<{ name: string, expiration: string }>
       > => {
         return this.walletLocalData.otherData.fioAddresses
       },
@@ -240,7 +282,7 @@ export class FioEngine extends CurrencyEngine {
         )
       },
       getFioDomains: async (): Promise<
-        { name: string, expiration: string, isPublic: boolean }[]
+        Array<{ name: string, expiration: string, isPublic: boolean }>
       > => {
         return this.walletLocalData.otherData.fioDomains
       },
@@ -278,6 +320,57 @@ export class FioEngine extends CurrencyEngine {
         this.walletInfo.keys.ownerPublicKey = pubKeys.ownerPublicKey
       }
     }
+
+    await this.checkAbiAccounts()
+  }
+
+  fioSdkInit() {
+    const baseUrl = shuffleArray(
+      this.currencyInfo.defaultSettings.apiUrls.map(apiUrl => apiUrl)
+    )[0]
+
+    this.fioSdk = new FIOSDK(
+      this.walletInfo.keys.fioKey,
+      this.walletInfo.keys.publicKey,
+      baseUrl,
+      this.fetchCors,
+      undefined,
+      this.tpid
+    )
+    this.fioSdkPreparedTrx = new FIOSDK(
+      this.walletInfo.keys.fioKey,
+      this.walletInfo.keys.publicKey,
+      '',
+      this.fetchCors,
+      undefined,
+      this.tpid,
+      true
+    )
+  }
+
+  async checkAbiAccounts(): Promise<void> {
+    if (Transactions.abiMap.size === FioConstants.rawAbiAccountName.length)
+      return
+    await asyncWaterfall(
+      shuffleArray(
+        this.currencyInfo.defaultSettings.apiUrls.map(
+          apiUrl => () => this.loadAbiAccounts(apiUrl)
+        )
+      )
+    )
+  }
+
+  async loadAbiAccounts(apiUrl: string) {
+    this.setFioSdkBaseUrl(apiUrl)
+    for (const accountName of FioConstants.rawAbiAccountName) {
+      if (Transactions.abiMap.get(accountName)) continue
+      const response = await this.fioSdk.getAbi(accountName)
+      Transactions.abiMap.set(response.account_name, response)
+    }
+  }
+
+  setFioSdkBaseUrl(apiUrl: string) {
+    Transactions.baseUrl = apiUrl
   }
 
   // Poll on the blockheight
@@ -294,10 +387,7 @@ export class FioEngine extends CurrencyEngine {
         )
       }
     } catch (e) {
-      this.log(`Error fetching height: ${JSON.stringify(e)}`)
-      this.log(`e.code: ${JSON.stringify(e.code)}`)
-      this.log(`e.message: ${JSON.stringify(e.message)}`)
-      console.error('checkBlockchainInnerLoop error: ' + JSON.stringify(e))
+      this.log.error(`checkBlockchainInnerLoop Error fetching height: ${e}`)
     }
   }
 
@@ -312,7 +402,7 @@ export class FioEngine extends CurrencyEngine {
     if (!bns.eq(balance, this.walletLocalData.totalBalances[tk])) {
       this.walletLocalData.totalBalances[tk] = balance
       this.localDataDirty()
-      this.log(tk + ': token Address balance: ' + balance)
+      this.log.warn(tk + ': token Address balance: ' + balance)
       this.currencyEngineCallbacks.onBalanceChanged(tk, balance)
     }
     this.tokenCheckBalanceStatus[tk] = 1
@@ -340,7 +430,7 @@ export class FioEngine extends CurrencyEngine {
     }
 
     // Transfer funds transaction
-    if (trxName === 'trnsfiopubky') {
+    if (trxName === 'trnsfiopubky' && data.amount != null) {
       nativeAmount = data.amount.toString()
       actorSender = data.actor
       if (data.payee_public_key === this.walletInfo.keys.publicKey) {
@@ -370,7 +460,7 @@ export class FioEngine extends CurrencyEngine {
           nativeAmount = bns.sub(nativeAmount, existingTrx.networkFee)
           networkFee = existingTrx.networkFee
         } else {
-          console.log(
+          this.log.error(
             'processTransaction error - existing spend transaction should have isTransferProcessed or isFeeProcessed set'
           )
         }
@@ -393,12 +483,12 @@ export class FioEngine extends CurrencyEngine {
     }
 
     // Fee transaction
-    if (trxName === 'transfer') {
+    if (trxName === 'transfer' && data.quantity != null) {
       const [amount] = data.quantity.split(' ')
       const exchangeAmount = amount.toString()
       const denom = getDenomInfo(this.currencyInfo, currencyCode)
       if (!denom) {
-        this.log(`Received unsupported currencyCode: ${currencyCode}`)
+        this.log.error(`Received unsupported currencyCode: ${currencyCode}`)
         return 0
       }
       const fioAmount = bns.mul(exchangeAmount, denom.multiplier)
@@ -426,7 +516,7 @@ export class FioEngine extends CurrencyEngine {
         if (otherParams.isTransferProcessed) {
           nativeAmount = bns.sub(existingTrx.nativeAmount, networkFee)
         } else {
-          console.log(
+          this.log.error(
             'processTransaction error - existing spend transaction should have isTransferProcessed or isFeeProcessed set'
           )
         }
@@ -455,15 +545,9 @@ export class FioEngine extends CurrencyEngine {
       return false
     let newHighestTxHeight = this.walletLocalData.otherData.highestTxHeight
     let lastActionSeqNumber = 0
-    const fioSDK = new FIOSDK(
-      '',
-      '',
-      this.currencyInfo.defaultSettings.historyNodeUrls[historyNodeIndex],
-      this.fetchCors,
-      undefined,
-      this.tpid
+    const actor = this.fioSdk.transactions.getActor(
+      this.walletInfo.keys.publicKey
     )
-    const actor = fioSDK.transactions.getActor(this.walletInfo.keys.publicKey)
     try {
       const lastActionObject = await this.requestHistory(
         historyNodeIndex,
@@ -558,9 +642,8 @@ export class FioEngine extends CurrencyEngine {
     try {
       transactions = await this.checkTransactions()
     } catch (e) {
-      console.log(e)
-      this.log('checkTransactionsInnerLoop fetches failed with error: ')
-      this.log(e)
+      this.log.error('checkTransactionsInnerLoop fetches failed with error: ')
+      this.log.error(e)
       return false
     }
 
@@ -602,26 +685,21 @@ export class FioEngine extends CurrencyEngine {
   async fioApiRequest(
     apiUrl: string,
     actionName: string,
-    params?: any
-  ): Promise<any> {
-    const fioSDK = new FIOSDK(
-      this.walletInfo.keys.fioKey,
-      this.walletInfo.keys.publicKey,
-      apiUrl,
-      this.fetchCors,
-      undefined,
-      this.tpid
-    )
+    params?: any,
+    returnPreparedTrx: boolean = false
+  ): Promise<any | PreparedTrx> {
+    const fioSdk = returnPreparedTrx ? this.fioSdkPreparedTrx : this.fioSdk
+    this.setFioSdkBaseUrl(apiUrl)
 
     let res
 
     try {
       switch (actionName) {
         case 'getChainInfo':
-          res = await fioSDK.transactions.getChainInfo()
+          res = await fioSdk.transactions.getChainInfo()
           break
         default:
-          res = await fioSDK.genericAction(actionName, params)
+          res = await fioSdk.genericAction(actionName, params)
       }
     } catch (e) {
       // handle FIO API error
@@ -643,14 +721,15 @@ export class FioEngine extends CurrencyEngine {
             list: e.list
           }
         }
-        this.log(
-          `FIO. fioApiRequest error. actionName: ${actionName} - apiUrl: ${apiUrl} - message: ${JSON.stringify(
-            e.json
-          )}`
-        )
+        if (e.errorCode !== 404)
+          this.log(
+            `fioApiRequest error. actionName: ${actionName} - apiUrl: ${apiUrl} - message: ${JSON.stringify(
+              e.json
+            )}`
+          )
       } else {
         this.log(
-          `FIO. fioApiRequest error. actionName: ${actionName} - apiUrl: ${apiUrl} - message: ${e.message}`
+          `fioApiRequest error. actionName: ${actionName} - apiUrl: ${apiUrl} - message: ${e.message}`
         )
         throw e
       }
@@ -659,34 +738,35 @@ export class FioEngine extends CurrencyEngine {
     return res
   }
 
-  async fioRetryApiRequest(
+  async executePreparedTrx(
     apiUrl: string,
-    requestParams: {
-      endPoint: string,
-      body: string,
-      fetchOptions?: any
-    }
-  ): Promise<any> {
-    const { endPoint, body, fetchOptions } = requestParams
-    const fioSDK = new FIOSDK(
-      this.walletInfo.keys.fioKey,
-      this.walletInfo.keys.publicKey,
-      apiUrl,
-      this.fetchCors,
-      undefined,
-      this.tpid
-    )
+    endpoint: string,
+    preparedTrx: PreparedTrx
+  ) {
+    this.setFioSdkBaseUrl(apiUrl)
     let res
 
+    this.log.warn(
+      `executePreparedTrx. preparedTrx: ${JSON.stringify(
+        preparedTrx
+      )} - apiUrl: ${apiUrl}`
+    )
     try {
-      res = await fioSDK.transactions.executeCall(endPoint, body, fetchOptions)
+      res = await this.fioSdk.executePreparedTrx(endpoint, preparedTrx)
+      this.log.warn(
+        `executePreparedTrx. res: ${JSON.stringify(
+          res
+        )} - apiUrl: ${apiUrl} - endpoint: ${endpoint}`
+      )
     } catch (e) {
       // handle FIO API error
       if (e.errorCode && fioApiErrorCodes.indexOf(e.errorCode) > -1) {
         this.log(
-          `FIO. fioApiRequest error. requestParams: ${JSON.stringify(
-            requestParams
-          )} - apiUrl: ${apiUrl} - message: ${JSON.stringify(e.json)}`
+          `executePreparedTrx error. requestParams: ${JSON.stringify(
+            preparedTrx
+          )} - apiUrl: ${apiUrl} - endpoint: ${endpoint} - message: ${JSON.stringify(
+            e.json
+          )}`
         )
         if (
           e.json &&
@@ -696,20 +776,14 @@ export class FioEngine extends CurrencyEngine {
         ) {
           e.message = e.json.fields[0].error
         }
-        res = {
-          isError: true,
-          data: {
-            code: e.errorCode,
-            message: e.message,
-            json: e.json,
-            list: e.list
-          }
-        }
+        throw e
       } else {
         this.log(
-          `FIO. fioApiRequest error. requestParams: ${JSON.stringify(
-            requestParams
-          )} - apiUrl: ${apiUrl} - message: ${e.message}`
+          `executePreparedTrx error. requestParams: ${JSON.stringify(
+            preparedTrx
+          )} - apiUrl: ${apiUrl} - endpoint: ${endpoint} - message: ${
+            e.message
+          }`
         )
         throw e
       }
@@ -720,66 +794,70 @@ export class FioEngine extends CurrencyEngine {
 
   async multicastServers(actionName: string, params?: any): Promise<any> {
     let res
-    if (ACTIONS_SKIP_SWITCH[actionName]) {
-      for (const apiUrl of shuffleArray([
-        ...this.currencyInfo.defaultSettings.apiUrls
-      ])) {
-        try {
-          res = await this.fioApiRequest(apiUrl, actionName, params)
-          break
-        } catch (e) {
-          if (e.requestParams) {
-            if (
-              EndPoint[ACTIONS_TO_END_POINT_KEYS[actionName]] &&
-              e.requestParams.endPoint.indexOf(
-                EndPoint[ACTIONS_TO_END_POINT_KEYS[actionName]]
-              ) < 0
-            ) {
-              continue
-            }
-            res = await asyncWaterfall(
-              shuffleArray(
-                this.currencyInfo.defaultSettings.apiUrls.map(apiUrl => () =>
-                  this.fioRetryApiRequest(apiUrl, e.requestParams)
-                )
-              )
+    if (BROADCAST_ACTIONS[actionName]) {
+      this.log.warn(
+        `multicastServers prepare trx. actionName: ${actionName} - res: ${JSON.stringify(
+          params
+        )}`
+      )
+      const preparedTrx = await asyncWaterfall(
+        shuffleArray(
+          this.currencyInfo.defaultSettings.apiUrls.map(
+            apiUrl => () => this.fioApiRequest(apiUrl, actionName, params, true)
+          )
+        )
+      )
+      this.log.warn(
+        `multicastServers executePreparedTrx. actionName: ${actionName} - res: ${JSON.stringify(
+          preparedTrx
+        )}`
+      )
+      res = await promiseAny(
+        shuffleArray(
+          this.currencyInfo.defaultSettings.apiUrls.map(apiUrl =>
+            this.executePreparedTrx(
+              apiUrl,
+              EndPoint[ACTIONS_TO_END_POINT_KEYS[actionName]],
+              preparedTrx
             )
-            break
-          } else if (
-            e.errorCode &&
-            [FIO_CHAIN_INFO_ERROR_CODE, FIO_BLOCK_NUMBER_ERROR_CODE].indexOf(
-              parseInt(e.errorCode)
-            ) > -1
-          ) {
-            continue
-          } else {
-            this.log(
-              `FIO. multicastServers. actionName - ${actionName}. Error message - ${
-                e.message
-              } - ${JSON.stringify(e.json)}`
-            )
-            throw e
-          }
-        }
-      }
+          )
+        )
+      )
+      this.log.warn(
+        `multicastServers res. actionName: ${actionName} - res: ${JSON.stringify(
+          res
+        )}`
+      )
       if (!res) {
         throw new Error('Service is unavailable')
       }
+    } else if (actionName === 'getFioNames') {
+      res = await promiseNy(
+        this.currencyInfo.defaultSettings.apiUrls.map(apiUrl =>
+          timeout(this.fioApiRequest(apiUrl, actionName, params), 10000)
+        ),
+        (result: GetFioName) => {
+          try {
+            return JSON.stringify(asGetFioName(result))
+          } catch (e) {
+            this.log(
+              `getFioNames checkResult function returned error ${e.name} ${e.message}`
+            )
+          }
+        },
+        2
+      )
     } else {
       res = await asyncWaterfall(
         shuffleArray(
-          this.currencyInfo.defaultSettings.apiUrls.map(apiUrl => () =>
-            this.fioApiRequest(apiUrl, actionName, params)
+          this.currencyInfo.defaultSettings.apiUrls.map(
+            apiUrl => () => this.fioApiRequest(apiUrl, actionName, params)
           )
         )
       )
     }
 
     if (res.isError) {
-      if (res.data.code === 409) {
-        // duplicate trx was sent, success case
-        return {}
-      }
       const error = new FioError(res.errorMessage || res.data.message)
       error.json = res.data.json
       error.list = res.data.list
@@ -806,7 +884,7 @@ export class FioEngine extends CurrencyEngine {
       const { balance } = await this.multicastServers('getFioBalance')
       nativeAmount = balance + ''
     } catch (e) {
-      this.log('checkAccountInnerLoop error: ' + JSON.stringify(e))
+      this.log('checkAccountInnerLoop error: ' + e)
       nativeAmount = '0'
     }
     this.updateBalance(currencyCode, nativeAmount)
@@ -818,50 +896,115 @@ export class FioEngine extends CurrencyEngine {
       })
 
       let isChanged = false
+      let areAddressesChanged = false
+      let areDomainsChanged = false
 
-      for (const fioAddress of result.fio_addresses) {
-        const existedFioAddress = this.walletLocalData.otherData.fioAddresses.find(
-          existedFioAddress => existedFioAddress.name === fioAddress.fio_address
-        )
-        if (existedFioAddress) {
-          if (existedFioAddress.expiration !== fioAddress.expiration) {
-            existedFioAddress.expiration = fioAddress.expiration
-            isChanged = true
+      // check addresses
+      if (
+        result.fio_addresses.length !==
+        this.walletLocalData.otherData.fioAddresses.length
+      ) {
+        areAddressesChanged = true
+      } else {
+        for (const fioAddress of result.fio_addresses) {
+          const existedFioAddress =
+            this.walletLocalData.otherData.fioAddresses.find(
+              existedFioAddress =>
+                existedFioAddress.name === fioAddress.fio_address
+            )
+          if (existedFioAddress) {
+            if (existedFioAddress.expiration !== fioAddress.expiration) {
+              areAddressesChanged = true
+              break
+            }
+          } else {
+            areAddressesChanged = true
+            break
           }
-        } else {
-          this.walletLocalData.otherData.fioAddresses.push({
-            name: fioAddress.fio_address,
-            expiration: fioAddress.expiration
-          })
-          isChanged = true
+        }
+
+        // check for removed / transferred addresses
+        if (!areAddressesChanged) {
+          for (const fioAddress of this.walletLocalData.otherData
+            .fioAddresses) {
+            if (
+              result.fio_addresses.findIndex(
+                item => item.fio_address === fioAddress.name
+              ) < 0
+            ) {
+              areAddressesChanged = true
+              break
+            }
+          }
         }
       }
 
-      for (const fioDomain of result.fio_domains) {
-        const existedFioDomain = this.walletLocalData.otherData.fioDomains.find(
-          existedFioDomain => existedFioDomain.name === fioDomain.fio_domain
+      // check domains
+      if (
+        result.fio_domains.length !==
+        this.walletLocalData.otherData.fioDomains.length
+      ) {
+        areDomainsChanged = true
+      } else {
+        for (const fioDomain of result.fio_domains) {
+          const existedFioDomain =
+            this.walletLocalData.otherData.fioDomains.find(
+              existedFioDomain => existedFioDomain.name === fioDomain.fio_domain
+            )
+          if (existedFioDomain) {
+            if (existedFioDomain.expiration !== fioDomain.expiration) {
+              areDomainsChanged = true
+              break
+            }
+            if (existedFioDomain.isPublic !== !!fioDomain.is_public) {
+              areDomainsChanged = true
+              break
+            }
+          } else {
+            areDomainsChanged = true
+            break
+          }
+        }
+
+        // check for removed / transferred domains
+        if (!areDomainsChanged) {
+          for (const fioDomain of this.walletLocalData.otherData.fioDomains) {
+            if (
+              result.fio_domains.findIndex(
+                item => item.fio_domain === fioDomain.name
+              ) < 0
+            ) {
+              areDomainsChanged = true
+              break
+            }
+          }
+        }
+      }
+
+      if (areAddressesChanged) {
+        isChanged = true
+        this.walletLocalData.otherData.fioAddresses = result.fio_addresses.map(
+          fioAddress => ({
+            name: fioAddress.fio_address,
+            expiration: fioAddress.expiration
+          })
         )
-        if (existedFioDomain) {
-          if (existedFioDomain.expiration !== fioDomain.expiration) {
-            existedFioDomain.expiration = fioDomain.expiration
-            isChanged = true
-          }
-          if (existedFioDomain.isPublic !== !!fioDomain.is_public) {
-            existedFioDomain.isPublic = !!fioDomain.is_public
-            isChanged = true
-          }
-        } else {
-          this.walletLocalData.otherData.fioDomains.push({
+      }
+
+      if (areDomainsChanged) {
+        isChanged = true
+        this.walletLocalData.otherData.fioDomains = result.fio_domains.map(
+          fioDomain => ({
             name: fioDomain.fio_domain,
             expiration: fioDomain.expiration,
             isPublic: !!fioDomain.is_public
           })
-          isChanged = true
-        }
+        )
       }
+
       if (isChanged) this.localDataDirty()
     } catch (e) {
-      this.log('checkAccountInnerLoop getFioNames error: ' + JSON.stringify(e))
+      this.log.warn('checkAccountInnerLoop getFioNames error: ' + e)
     }
   }
 
@@ -874,7 +1017,7 @@ export class FioEngine extends CurrencyEngine {
           this.walletLocalData.otherData.fioRequestsToApprove[fioRequestId]
         )
       } catch (e) {
-        this.log(
+        this.log.error(
           `approveErroredFioRequests recordObtData error: ${JSON.stringify(
             e
           )} for ${
@@ -889,6 +1032,8 @@ export class FioEngine extends CurrencyEngine {
     await super.clearBlockchainCache()
     this.walletLocalData.otherData.highestTxHeight = 0
     this.walletLocalData.otherData.fioAddresses = []
+    this.walletLocalData.otherData.fioDomains = []
+    this.walletLocalData.otherData.fioRequestsToApprove = {}
   }
 
   // ****************************************************************************
@@ -916,18 +1061,32 @@ export class FioEngine extends CurrencyEngine {
       edgeSpendInfoIn
     )
 
-    // Only query FIO fee if the public address is different from last makeSpend()
+    const { otherParams } = edgeSpendInfo
     let fee
-    if (
-      edgeSpendInfo.spendTargets[0].publicAddress ===
-      this.recentFioFee.publicAddress
-    ) {
-      fee = this.recentFioFee.fee
-    } else {
+    if (otherParams?.fioAction) {
+      let feeFioAddress = ''
+      if (FEE_ACTION_MAP[otherParams.fioAction] && otherParams.fioParams) {
+        feeFioAddress =
+          otherParams.fioParams[FEE_ACTION_MAP[otherParams.fioAction].propName]
+      }
       const feeResponse = await this.multicastServers('getFee', {
-        endPoint: EndPoint.transferTokens
+        endPoint: EndPoint[otherParams.fioAction],
+        fioAddress: feeFioAddress
       })
       fee = feeResponse.fee
+    } else {
+      // Only query FIO fee if the public address is different from last makeSpend()
+      if (
+        edgeSpendInfo.spendTargets[0].publicAddress ===
+        this.recentFioFee.publicAddress
+      ) {
+        fee = this.recentFioFee.fee
+      } else {
+        const feeResponse = await this.multicastServers('getFee', {
+          endPoint: EndPoint.transferTokens
+        })
+        fee = feeResponse.fee
+      }
     }
 
     const publicAddress = edgeSpendInfo.spendTargets[0].publicAddress
@@ -935,46 +1094,76 @@ export class FioEngine extends CurrencyEngine {
     if (bns.gt(bns.add(quantity, `${fee}`), nativeBalance)) {
       throw new InsufficientFundsError()
     }
-    const memo = ''
-    const actor = ''
-    const transactionJson = {
-      actions: [
-        {
-          account: 'fio.token',
-          name: 'trnsfiopubky',
-          authorization: [
-            {
-              actor: actor,
-              permission: 'active'
-            }
-          ],
-          data: {
-            from: this.walletInfo.keys.publicKey,
-            to: publicAddress,
-            quantity,
-            memo
-          }
-        }
-      ]
-    }
 
-    const edgeTransaction: EdgeTransaction = {
-      txid: '', // txid
-      date: 0, // date
-      currencyCode, // currencyCode
-      blockHeight: 0, // blockHeight
-      nativeAmount: bns.sub(`-${quantity}`, `${fee}`), // nativeAmount
-      networkFee: `${fee}`, // networkFee
-      ourReceiveAddresses: [], // ourReceiveAddresses
-      signedTx: '0', // signedTx
-      otherParams: {
-        transactionJson
+    if (otherParams?.fioAction) {
+      if (
+        ['transferFioAddress', 'transferFioDomain'].indexOf(
+          otherParams.fioAction
+        ) > -1
+      ) {
+        otherParams.fioParams.newOwnerKey = publicAddress
       }
+      const edgeTransaction: EdgeTransaction = {
+        txid: '',
+        date: 0,
+        currencyCode: this.currencyInfo.currencyCode,
+        blockHeight: 0,
+        nativeAmount: `-${fee}`,
+        networkFee: `${fee}`,
+        parentNetworkFee: '0',
+        signedTx: '',
+        ourReceiveAddresses: [],
+        otherParams: {
+          transactionJson: otherParams
+        },
+        metadata: {
+          notes: ''
+        }
+      }
+
+      return edgeTransaction
+    } else {
+      const memo = ''
+      const actor = ''
+      const transactionJson = {
+        actions: [
+          {
+            account: 'fio.token',
+            name: 'trnsfiopubky',
+            authorization: [
+              {
+                actor: actor,
+                permission: 'active'
+              }
+            ],
+            data: {
+              from: this.walletInfo.keys.publicKey,
+              to: publicAddress,
+              quantity,
+              memo
+            }
+          }
+        ]
+      }
+
+      const edgeTransaction: EdgeTransaction = {
+        txid: '', // txid
+        date: 0, // date
+        currencyCode, // currencyCode
+        blockHeight: 0, // blockHeight
+        nativeAmount: bns.sub(`-${quantity}`, `${fee}`), // nativeAmount
+        networkFee: `${fee}`, // networkFee
+        ourReceiveAddresses: [], // ourReceiveAddresses
+        signedTx: '0', // signedTx
+        otherParams: {
+          transactionJson
+        }
+      }
+
+      this.recentFioFee = { publicAddress, fee }
+
+      return edgeTransaction
     }
-
-    this.recentFioFee = { publicAddress, fee }
-
-    return edgeTransaction
   }
 
   async signTx(edgeTransaction: EdgeTransaction): Promise<EdgeTransaction> {
@@ -985,27 +1174,41 @@ export class FioEngine extends CurrencyEngine {
   async broadcastTx(
     edgeTransaction: EdgeTransaction
   ): Promise<EdgeTransaction> {
+    let trx
     if (
-      !edgeTransaction.otherParams ||
-      !edgeTransaction.otherParams.transactionJson
-    )
+      edgeTransaction.otherParams &&
+      edgeTransaction.otherParams.transactionJson &&
+      edgeTransaction.otherParams.transactionJson.fioAction
+    ) {
+      trx = await this.otherMethods.fioAction(
+        edgeTransaction.otherParams.transactionJson.fioAction,
+        edgeTransaction.otherParams.transactionJson.fioParams
+      )
+      edgeTransaction.metadata = {
+        notes: trx.transaction_id
+      }
+    } else if (edgeTransaction.spendTargets) {
+      // do transfer
+      const publicAddress = edgeTransaction.spendTargets[0].publicAddress
+      const amount = bns.abs(
+        bns.add(edgeTransaction.nativeAmount, edgeTransaction.networkFee)
+      )
+      trx = await this.multicastServers('transferTokens', {
+        payeeFioPublicKey: publicAddress,
+        amount,
+        maxFee: edgeTransaction.networkFee
+      })
+    } else {
       throw new Error(
         'transactionJson not set. FIO transferTokens requires publicAddress'
       )
-    const publicAddress =
-      edgeTransaction.otherParams.transactionJson.actions[0].data.to
-    const amount = bns.abs(
-      bns.add(edgeTransaction.nativeAmount, edgeTransaction.networkFee)
-    )
-    const transfer = await this.multicastServers('transferTokens', {
-      payeeFioPublicKey: publicAddress,
-      amount,
-      maxFee: edgeTransaction.networkFee
-    })
+    }
 
-    edgeTransaction.txid = transfer.transaction_id
+    edgeTransaction.txid = trx.transaction_id
     edgeTransaction.date = Date.now() / 1000
-    edgeTransaction.blockHeight = transfer.block_num
+    edgeTransaction.blockHeight = trx.block_num
+    this.log.warn(`SUCCESS broadcastTx\n${cleanTxLogs(edgeTransaction)}`)
+
     return edgeTransaction
   }
 

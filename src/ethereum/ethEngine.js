@@ -19,11 +19,14 @@ import EthereumUtil from 'ethereumjs-util'
 import ethWallet from 'ethereumjs-wallet'
 
 import { CurrencyEngine } from '../common/engine.js'
+import { type CustomToken } from '../common/types'
 import {
   addHexPrefix,
   bufToHex,
+  cleanTxLogs,
   getEdgeInfoServer,
   getOtherParams,
+  isHex,
   normalizeAddress,
   toHex,
   validateObject
@@ -31,11 +34,7 @@ import {
 import { calcMiningFee } from './ethMiningFees.js'
 import { EthereumNetwork } from './ethNetwork'
 import { EthereumPlugin } from './ethPlugin'
-import {
-  EthGasStationSchema,
-  NetworkFeesSchema,
-  SuperEthGetUnconfirmedTransactions
-} from './ethSchema.js'
+import { EthGasStationSchema, NetworkFeesSchema } from './ethSchema.js'
 import {
   type EthereumFee,
   type EthereumFeesGasPrice,
@@ -45,7 +44,6 @@ import {
   type LastEstimatedGasLimit
 } from './ethTypes.js'
 
-const UNCONFIRMED_TRANSACTION_POLL_MILLISECONDS = 3000
 const NETWORKFEES_POLL_MILLISECONDS = 60 * 10 * 1000 // 10 minutes
 const WEI_MULTIPLIER = 100000000
 const GAS_PRICE_SANITY_CHECK = 30000 // 3000 Gwei (ethgasstation api reports gas prices with additional decimal place)
@@ -90,7 +88,7 @@ export class EthereumEngine extends CurrencyEngine {
     }
     if (!bns.eq(balance, this.walletLocalData.totalBalances[tk])) {
       this.walletLocalData.totalBalances[tk] = balance
-      this.log(tk + ': token Address balance: ' + balance)
+      this.log.warn(tk + ': token Address balance: ' + balance)
       this.currencyEngineCallbacks.onBalanceChanged(tk, balance)
     }
     this.tokenCheckBalanceStatus[tk] = 1
@@ -101,7 +99,7 @@ export class EthereumEngine extends CurrencyEngine {
     const fromAddress = '0x' + tx.inputs[0].addresses[0]
     const toAddress = '0x' + tx.outputs[0].addresses[0]
     const epochTime = Date.parse(tx.received) / 1000
-    const ourReceiveAddresses: Array<string> = []
+    const ourReceiveAddresses: string[] = []
 
     let nativeAmount: string
     if (
@@ -145,42 +143,6 @@ export class EthereumEngine extends CurrencyEngine {
     this.addTransaction(this.currencyInfo.currencyCode, edgeTransaction)
   }
 
-  // currently only for Ethereum
-  async checkUnconfirmedTransactionsInnerLoop() {
-    const address = normalizeAddress(this.walletLocalData.publicKey)
-    const lowerCaseCurrencyCode = this.currencyInfo.currencyCode.toLowerCase()
-    const url = `${this.currencyInfo.defaultSettings.otherSettings.superethServers[0]}/v1/${lowerCaseCurrencyCode}/main/txs/${address}`
-    let jsonObj = null
-    try {
-      jsonObj = await this.ethNetwork.fetchGet(url)
-    } catch (e) {
-      this.log(e)
-      this.log('Failed to fetch unconfirmed transactions')
-      return
-    }
-
-    const valid = validateObject(jsonObj, SuperEthGetUnconfirmedTransactions)
-    if (valid) {
-      const transactions = jsonObj
-      for (const tx of transactions) {
-        if (
-          normalizeAddress(tx.inputs[0].addresses[0]) === address ||
-          normalizeAddress(tx.outputs[0].addresses[0]) === address
-        ) {
-          this.processUnconfirmedTransaction(tx)
-        }
-      }
-    } else {
-      this.log('Invalid data for unconfirmed transactions')
-    }
-    if (this.transactionsChangedArray.length > 0) {
-      this.currencyEngineCallbacks.onTransactionsChanged(
-        this.transactionsChangedArray
-      )
-      this.transactionsChangedArray = []
-    }
-  }
-
   // curreently for Ethereum but should allow other currencies
   async checkUpdateNetworkFees() {
     try {
@@ -198,21 +160,24 @@ export class EthereumEngine extends CurrencyEngine {
           this.walletLocalDataDirty = true
         }
       } else {
-        this.log('Error: Fetched invalid networkFees')
+        this.log.error(
+          `Error: Fetched invalid networkFees ${JSON.stringify(jsonObj)}`
+        )
       }
     } catch (err) {
-      this.log(
+      this.log.error(
         `Error fetching ${this.currencyInfo.currencyCode} networkFees from Edge info server`
       )
-      this.log(err)
+      this.log.error(err)
     }
 
+    let jsonObj
     try {
-      const {
-        ethGasStationUrl
-      } = this.currencyInfo.defaultSettings.otherSettings
+      const { ethGasStationUrl } =
+        this.currencyInfo.defaultSettings.otherSettings
+      if (ethGasStationUrl == null) return
       const { ethGasStationApiKey } = this.initOptions
-      const jsonObj = await this.ethNetwork.fetchGet(
+      jsonObj = await this.ethNetwork.fetchGet(
         `${ethGasStationUrl}?api-key=${ethGasStationApiKey || ''}`
       )
       const valid = validateObject(jsonObj, EthGasStationSchema)
@@ -231,21 +196,17 @@ export class EthereumEngine extends CurrencyEngine {
         let fastest = jsonObj.fastest
 
         // Sanity checks
-        if (safeLow < 1 || safeLow > GAS_PRICE_SANITY_CHECK) {
-          this.log('Invalid safeLow value from EthGasStation')
-          return
+        if (safeLow <= 0 || safeLow > GAS_PRICE_SANITY_CHECK) {
+          throw new Error('Invalid safeLow value from EthGasStation')
         }
         if (average < 1 || average > GAS_PRICE_SANITY_CHECK) {
-          this.log('Invalid average value from EthGasStation')
-          return
+          throw new Error('Invalid average value from EthGasStation')
         }
         if (fast < 1 || fast > GAS_PRICE_SANITY_CHECK) {
-          this.log('Invalid fastest value from EthGasStation')
-          return
+          throw new Error('Invalid fastest value from EthGasStation')
         }
         if (fastest < 1 || fastest > GAS_PRICE_SANITY_CHECK) {
-          this.log('Invalid fastest value from EthGasStation')
-          return
+          throw new Error('Invalid fastest value from EthGasStation')
         }
 
         // Correct inconsistencies
@@ -280,13 +241,14 @@ export class EthereumEngine extends CurrencyEngine {
           this.walletLocalDataDirty = true
         }
       } else {
-        this.log('Error: Fetched invalid networkFees from EthGasStation')
+        throw new Error(`Error: Fetched invalid networkFees from EthGasStation`)
       }
     } catch (err) {
-      this.log(
+      this.log.error(
         `Error fetching ${this.currencyInfo.currencyCode} networkFees from EthGasStation`
       )
-      this.log(err)
+      this.log.error(err)
+      this.log.crash(err, { rawData: jsonObj })
     }
   }
 
@@ -303,10 +265,6 @@ export class EthereumEngine extends CurrencyEngine {
   async startEngine() {
     this.engineOn = true
     this.addToLoop('checkUpdateNetworkFees', NETWORKFEES_POLL_MILLISECONDS)
-    this.addToLoop(
-      'checkUnconfirmedTransactionsInnerLoop',
-      UNCONFIRMED_TRANSACTION_POLL_MILLISECONDS
-    )
 
     this.ethNetwork.needsLoop()
 
@@ -322,6 +280,35 @@ export class EthereumEngine extends CurrencyEngine {
   async makeSpend (edgeSpendInfoIn: EdgeSpendInfo) {
     const { edgeSpendInfo, currencyCode, otherParams = {} } = super.makeSpend(edgeSpendInfoIn)
 
+    /**
+    For RBF transactions, get the gas price and limit (fees) of the existing
+    transaction as well as the current nonce. The fees and the nonce will be
+    used instead of the calculated equivalents.
+    */
+    let rbfGasPrice: string
+    let rbfGasLimit: string
+    let rbfNonce: string
+    const rbfTxid =
+      edgeSpendInfo.rbfTxid && normalizeAddress(edgeSpendInfo.rbfTxid)
+    if (rbfTxid) {
+      const rbfTxIndex = this.findTransaction(currencyCode, rbfTxid)
+
+      if (rbfTxIndex > -1) {
+        const rbfTrx = this.transactionList[currencyCode][rbfTxIndex]
+
+        if (rbfTrx.otherParams) {
+          const { gasPrice, gas, nonceUsed } = rbfTrx.otherParams
+          rbfGasPrice = bns.mul(gasPrice, '2')
+          rbfGasLimit = gas
+          rbfNonce = nonceUsed
+        }
+      }
+
+      if (!rbfGasPrice || !rbfGasLimit || !rbfNonce) {
+        throw new Error('Missing data to complete RBF transaction.')
+      }
+    }
+
     // Ethereum can only have one output
     if (edgeSpendInfo.spendTargets.length !== 1) {
       throw new Error('Error: only one output allowed')
@@ -336,13 +323,25 @@ export class EthereumEngine extends CurrencyEngine {
     let data =
       spendTarget.otherParams != null ? spendTarget.otherParams.data : undefined
 
-    const miningFees = calcMiningFee(
-      edgeSpendInfo,
-      this.walletLocalData.otherData.networkFees,
-      this.currencyInfo
-    )
-    const { gasPrice, useDefaults } = miningFees
-    let { gasLimit } = miningFees
+    let gasPrice: string
+    let gasLimit: string
+    let useDefaults: boolean = false
+
+    // Use RBF gas price and gas limit when present, otherwise, calculate mining fees
+    if (rbfGasPrice && rbfGasLimit) {
+      gasPrice = rbfGasPrice
+      gasLimit = rbfGasLimit
+    } else {
+      const miningFees = calcMiningFee(
+        edgeSpendInfo,
+        this.walletLocalData.otherData.networkFees,
+        this.currencyInfo
+      )
+      gasPrice = miningFees.gasPrice
+      gasLimit = miningFees.gasLimit
+      useDefaults = miningFees.useDefaults
+    }
+    
     const defaultGasLimit = gasLimit
     let nativeAmount = edgeSpendInfo.spendTargets[0].nativeAmount
 
@@ -359,7 +358,9 @@ export class EthereumEngine extends CurrencyEngine {
         cumulativeGasUsed: '0',
         errorVal: 0,
         tokenRecipientAddress: null,
-        data: data
+        nonceArg: rbfNonce,
+        rbfTxid,
+        data
       }
       otherParamsOut = { ...otherParams, ...ethParams }
       value = bns.add(nativeAmount, '0', 16)
@@ -387,6 +388,8 @@ export class EthereumEngine extends CurrencyEngine {
         cumulativeGasUsed: '0',
         errorVal: 0,
         tokenRecipientAddress: publicAddress,
+        nonceArg: rbfNonce,
+        rbfTxid,
         data
       }
       otherParamsOut = { ...otherParams, ...ethParams }
@@ -408,12 +411,16 @@ export class EthereumEngine extends CurrencyEngine {
         data = '0x' + Buffer.from(dataArray).toString('hex')
       }
 
-      const estimateGasParams = {
-        to: contractAddress || publicAddress,
-        gas: '0xffffff',
-        value,
-        data
-      }
+      const estimateGasParams = [
+        {
+          to: contractAddress || publicAddress,
+          from: this.walletLocalData.publicKey,
+          gas: '0xffffff',
+          value,
+          data
+        },
+        'latest'
+      ]
       try {
         // Determine if recipient is a normal or contract address
         const getCodeResult = await this.ethNetwork.multicastServers(
@@ -421,29 +428,44 @@ export class EthereumEngine extends CurrencyEngine {
           [contractAddress || publicAddress, 'latest']
         )
 
-        if (bns.gt(parseInt(getCodeResult.result, 16).toString(), '0')) {
-          const estimateGasResult = await this.ethNetwork.multicastServers(
-            'eth_estimateGas',
-            [estimateGasParams]
-          )
-          // Check if successful http response was actually an error
-          if (estimateGasResult.error != null) {
-            this.lastEstimatedGasLimit.gasLimit = ''
-            throw new Error(
-              'Successful estimateGasResult response object included an error'
+        try {
+          if (getCodeResult.result.result !== '0x') {
+            const estimateGasResult = await this.ethNetwork.multicastServers(
+              'eth_estimateGas',
+              estimateGasParams
             )
+            this.log.warn(
+              'lookhere estimateGas estimateGasResult',
+              JSON.stringify(estimateGasResult)
+            )
+            gasLimit = bns.add(
+              parseInt(estimateGasResult.result.result, 16).toString(),
+              '0'
+            )
+            // Overestimate gas limit to reduce chance of failure when sending to a contract
+            if (currencyCode === this.currencyInfo.currencyCode) {
+              // Double gas limit estimate when sending ETH to contract
+              gasLimit = bns.mul(gasLimit, '2')
+            } else {
+              // For tokens, double estimate if it's less than half of default, otherwise use default. For estimates beyond default value, use the estimate as-is.
+              gasLimit = bns.lt(gasLimit, bns.div(defaultGasLimit, '2'))
+                ? bns.mul(gasLimit, '2')
+                : bns.lt(gasLimit, defaultGasLimit)
+                ? defaultGasLimit
+                : gasLimit
+            }
+          } else {
+            gasLimit = '21000'
           }
-          gasLimit = bns.add(
-            parseInt(estimateGasResult.result.result, 16).toString(),
-            '0'
+        } catch (e) {
+          // If we know the address is a contract but estimateGas fails use the default token gas limit
+          if (
+            this.currencyInfo.defaultSettings.otherSettings.defaultNetworkFees
+              .default.gasLimit.tokenTransaction != null
           )
-
-          // Over estimate gas limit for token transactions
-          if (currencyCode !== this.currencyInfo.currencyCode) {
-            gasLimit = bns.mul(gasLimit, '2')
-          }
-        } else {
-          gasLimit = '21000'
+            gasLimit =
+              this.currencyInfo.defaultSettings.otherSettings.defaultNetworkFees
+                .default.gasLimit.tokenTransaction
         }
 
         // Sanity check calculated value
@@ -460,7 +482,7 @@ export class EthereumEngine extends CurrencyEngine {
           gasLimit
         }
       } catch (err) {
-        this.log(err)
+        this.log.error(`makeSpend Error determining gas limit ${err}`)
       }
     } else if (useDefaults) {
       // If recipient and contract address are the same from the previous makeSpend(), use the previously calculated gasLimit
@@ -468,9 +490,8 @@ export class EthereumEngine extends CurrencyEngine {
     }
     otherParams.gas = gasLimit
 
-    const nativeBalance = this.walletLocalData.totalBalances[
-      this.currencyInfo.currencyCode
-    ]
+    const nativeBalance =
+      this.walletLocalData.totalBalances[this.currencyInfo.currencyCode]
 
     let nativeNetworkFee = bns.mul(gasPrice, gasLimit)
     let totalTxAmount = '0'
@@ -541,13 +562,17 @@ export class EthereumEngine extends CurrencyEngine {
     } else {
       nativeAmountHex = bns.mul('-1', edgeTransaction.nativeAmount, 16)
     }
-    const nonceArg = otherParams.nonceArg
-    let nonceHex = nonceArg && toHex(nonceArg)
-    if (!nonceHex) {
+
+    // Nonce:
+
+    const nonceArg: string = otherParams.nonceArg
+    let nonce: string = nonceArg
+    if (!nonce) {
       // Use an unconfirmed nonce if
       // 1. We have unconfirmed spending txs in the transaction list
       // 2. It is greater than the confirmed nonce
       // 3. Is no more than 5 higher than confirmed nonce
+      // Othewise, use the next nonce
       if (
         this.walletLocalData.numUnconfirmedSpendTxs &&
         bns.gt(
@@ -560,7 +585,7 @@ export class EthereumEngine extends CurrencyEngine {
           this.walletLocalData.otherData.nextNonce
         )
         if (bns.lte(diff, '5')) {
-          nonceHex = toHex(this.walletLocalData.otherData.unconfirmedNextNonce)
+          nonce = this.walletLocalData.otherData.unconfirmedNextNonce
           this.walletLocalData.otherData.unconfirmedNextNonce = bns.add(
             this.walletLocalData.otherData.unconfirmedNextNonce,
             '1'
@@ -571,15 +596,18 @@ export class EthereumEngine extends CurrencyEngine {
           e.name = 'ErrorExcessivePendingSpends'
           throw e
         }
+      } else {
+        nonce = this.walletLocalData.otherData.nextNonce
+        this.walletLocalData.otherData.unconfirmedNextNonce = bns.add(
+          this.walletLocalData.otherData.nextNonce,
+          '1'
+        )
       }
     }
-    if (!nonceHex) {
-      nonceHex = toHex(this.walletLocalData.otherData.nextNonce)
-      this.walletLocalData.otherData.unconfirmedNextNonce = bns.add(
-        this.walletLocalData.otherData.nextNonce,
-        '1'
-      )
-    }
+    // Convert nonce to hex for tsParams
+    const nonceHex = toHex(nonce)
+
+    // Data:
 
     let data
     if (otherParams.data != null) {
@@ -598,6 +626,8 @@ export class EthereumEngine extends CurrencyEngine {
       nativeAmountHex = '0x00'
     }
 
+    // Tx Parameters:
+
     const txParams = {
       nonce: nonceHex,
       gasPrice: gasPriceHex,
@@ -615,30 +645,28 @@ export class EthereumEngine extends CurrencyEngine {
     )
     const wallet = ethWallet.fromPrivateKey(privKey)
 
-    this.log(wallet.getAddressString())
+    this.log.warn(`signTx getAddressString ${wallet.getAddressString()}`)
 
-    this.log('signTx txParams', txParams)
     const tx = new EthereumTx(txParams)
     tx.sign(privKey)
 
     edgeTransaction.signedTx = bufToHex(tx.serialize())
     edgeTransaction.txid = bufToHex(tx.hash())
     edgeTransaction.date = Date.now() / 1000
-
+    if (edgeTransaction.otherParams) {
+      edgeTransaction.otherParams.nonceUsed = nonce
+    }
+    this.log.warn(`signTx\n${cleanTxLogs(edgeTransaction)}`)
     return edgeTransaction
   }
 
   async broadcastTx(
     edgeTransaction: EdgeTransaction
   ): Promise<EdgeTransaction> {
-    const result = await this.ethNetwork.multicastServers(
-      'broadcastTx',
-      edgeTransaction
-    )
+    await this.ethNetwork.multicastServers('broadcastTx', edgeTransaction)
 
     // Success
-    this.log(`SUCCESS broadcastTx\n${JSON.stringify(result)}`)
-    this.log('edgeTransaction = ', edgeTransaction)
+    this.log.warn(`SUCCESS broadcastTx\n${cleanTxLogs(edgeTransaction)}`)
 
     return edgeTransaction
   }
@@ -658,6 +686,43 @@ export class EthereumEngine extends CurrencyEngine {
       return this.walletInfo.keys.publicKey
     }
     return ''
+  }
+
+  // Overload saveTx to mutate replaced transactions by RBF
+  async saveTx(edgeTransaction: EdgeTransaction) {
+    // We must check if this transaction replaces another transaction
+    if (edgeTransaction.otherParams && edgeTransaction.otherParams.rbfTxid) {
+      const { currencyCode } = edgeTransaction
+
+      // Get the replaced transaction using the rbfTxid
+      const txid = edgeTransaction.otherParams.rbfTxid
+      const idx = this.findTransaction(currencyCode, txid)
+      const replacedEdgeTransaction = this.transactionList[currencyCode][idx]
+
+      // Use the RBF metadata because metadata for replaced transaction is not
+      // present in edge-currency-accountbased state
+      const metadata = edgeTransaction.metadata
+
+      // Update the transaction's blockHeight to -1 (drops the transaction)
+      const updatedEdgeTransaction: EdgeTransaction = {
+        ...replacedEdgeTransaction,
+        metadata,
+        blockHeight: -1
+      }
+
+      this.addTransaction(currencyCode, updatedEdgeTransaction)
+    }
+
+    super.saveTx(edgeTransaction)
+  }
+
+  async addCustomToken(obj: CustomToken) {
+    let contractAddress = obj.contractAddress.replace('0x', '').toLowerCase()
+    if (!isHex(contractAddress) || contractAddress.length !== 40) {
+      throw new Error('ErrorInvalidContractAddress')
+    }
+    contractAddress = '0x' + contractAddress
+    super.addCustomToken(obj, contractAddress)
   }
 }
 

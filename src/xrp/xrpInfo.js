@@ -3,7 +3,6 @@
 
 import { type EdgeCurrencyInfo } from 'edge-core-js/types'
 
-import { imageServerUrl } from '../common/utils'
 import { type XrpSettings } from './xrpTypes.js'
 
 const otherSettings: XrpSettings = {
@@ -15,7 +14,13 @@ const otherSettings: XrpSettings = {
 }
 
 const defaultSettings: any = {
-  otherSettings
+  otherSettings,
+  fee: '0.00001',
+  errorCodes: {
+    UNIQUE_IDENTIFIER_EXCEEDS_LENGTH: 'UNIQUE_IDENTIFIER_EXCEEDS_LENGTH',
+    UNIQUE_IDENTIFIER_EXCEEDS_LIMIT: 'UNIQUE_IDENTIFIER_EXCEEDS_LIMIT',
+    UNIQUE_IDENTIFIER_FORMAT: 'UNIQUE_IDENTIFIER_FORMAT'
+  }
 }
 
 export const currencyInfo: EdgeCurrencyInfo = {
@@ -38,7 +43,5 @@ export const currencyInfo: EdgeCurrencyInfo = {
       symbol: 'X'
     }
   ],
-  symbolImage: `${imageServerUrl}/ripple-logo-solo-64.png`,
-  symbolImageDarkMono: `${imageServerUrl}/ripple-logo-solo-64.png`,
   metaTokens: []
 }

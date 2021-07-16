@@ -9,9 +9,20 @@ import {
   type EdgeCurrencyInfo
 } from 'edge-core-js/types'
 
-import { imageServerUrl } from '../common/utils'
 import { makeEosBasedPluginInner } from './eosPlugin'
 import { type EosJsConfig, type EosSettings } from './eosTypes'
+
+const GREYMASS_FUEL_ACTION = {
+  authorization: [
+    {
+      actor: 'greymassfuel',
+      permission: 'cosign'
+    }
+  ],
+  account: 'greymassnoop',
+  name: 'noop',
+  data: {}
+}
 
 // ----EOSIO MAIN NET----
 export const eosJsConfig: EosJsConfig = {
@@ -22,13 +33,18 @@ export const eosJsConfig: EosJsConfig = {
   verbose: false // verbose logging such as API activity
 }
 
+const denominations = [
+  // An array of Objects of the possible denominations for this currency
+  {
+    name: 'EOS',
+    multiplier: '10000',
+    symbol: 'E'
+  }
+]
+
 const otherSettings: EosSettings = {
   eosActivationServers: ['https://eospay.edge.app'],
-  eosHyperionNodes: [
-    'https://api.eossweden.org',
-    'https://mainnet.eosn.io',
-    'https://eos.hyperion.eosrio.io'
-  ],
+  eosHyperionNodes: ['https://api.eossweden.org'],
   eosNodes: [
     'https://api.eoseoul.io',
     'https://api.eoslaomao.com',
@@ -41,7 +57,9 @@ const otherSettings: EosSettings = {
     'https://api.eosn.io'
   ],
   eosFuelServers: ['https://eos.greymass.com'],
-  uriProtocol: 'eos'
+  eosDfuseServers: ['https://eos.dfuse.eosnation.io'],
+  uriProtocol: 'eos',
+  fuelActions: [GREYMASS_FUEL_ACTION]
 }
 
 const defaultSettings: any = {
@@ -61,17 +79,18 @@ export const eosCurrencyInfo: EdgeCurrencyInfo = {
   addressExplorer: 'https://bloks.io/account/%s',
   transactionExplorer: 'https://bloks.io/transaction/%s',
 
-  denominations: [
-    // An array of Objects of the possible denominations for this currency
+  denominations,
+  metaTokens: [
     {
       name: 'EOS',
+      currencyName: 'EOS',
       multiplier: '10000',
-      symbol: 'E'
+      symbol: 'E',
+      currencyCode: 'EOS',
+      contractAddress: 'eosio.token',
+      denominations
     }
-  ],
-  symbolImage: `${imageServerUrl}/eos-logo-solo-64.png`,
-  symbolImageDarkMono: `${imageServerUrl}/eos-logo-solo-64.png`,
-  metaTokens: []
+  ]
 }
 
 export const makeEosPlugin = (opts: EdgeCorePluginOptions) => {

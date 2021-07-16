@@ -11,12 +11,13 @@ import {
   asNumber,
   asObject,
   asOptional,
-  asString
+  asString,
+  asUnknown
 } from 'cleaners'
 
 export type EthereumInitOptions = {
   blockcypherApiKey?: string,
-  etherscanApiKey?: string | Array<string>,
+  etherscanApiKey?: string | string[],
   infuraProjectId?: string,
   blockchairApiKey?: string,
   alethioApiKey?: string,
@@ -26,9 +27,9 @@ export type EthereumInitOptions = {
 }
 
 export type EthereumSettings = {
-  etherscanApiServers: Array<string>,
-  blockcypherApiServers: Array<string>,
-  superethServers: Array<string>,
+  etherscanApiServers: string[],
+  blockcypherApiServers: string[],
+  blockbookServers: string[],
   iosAllowedTokens: { [currencyCode: string]: boolean }
 }
 
@@ -133,14 +134,16 @@ export type EtherscanInternalTransaction = $Call<
 >
 
 export type EthereumTxOtherParams = {
-  from: Array<string>,
-  to: Array<string>,
+  from: string[],
+  to: string[],
   gas: string,
   gasPrice: string,
   gasUsed: string,
   cumulativeGasUsed?: string,
   errorVal: number,
   tokenRecipientAddress: string | null,
+  nonceUsed?: string,
+  rbfTxid?: string,
   data?: string | null
 }
 
@@ -155,7 +158,7 @@ export type AlethioTokenTransferAttributes = {
   symbol: string,
   fee: string | void,
   value: string,
-  globalRank: Array<number>
+  globalRank: number[]
 }
 
 export type AlethioTransactionDataObj = {
@@ -175,6 +178,64 @@ export type AlethioTokenTransfer = {
   attributes: AlethioTokenTransferAttributes,
   relationships: AlethioTransactionRelationships
 }
+
+export const asBlockbookBlockHeight = asObject({
+  blockbook: asObject({
+    bestHeight: asNumber
+  })
+})
+
+export type BlockbookBlockHeight = $Call<typeof asBlockbookBlockHeight>
+
+export const asBlockbookTokenTransfer = asObject({
+  from: asString,
+  to: asString,
+  symbol: asString,
+  value: asString,
+  token: asString
+})
+
+export type BlockbookTokenTransfer = $Call<typeof asBlockbookTokenTransfer>
+
+export const asBlockbookTx = asObject({
+  txid: asString,
+  vin: asArray(asObject({ addresses: asArray(asString) })),
+  vout: asArray(asObject({ addresses: asArray(asString) })),
+  blockHeight: asNumber,
+  value: asString,
+  blockTime: asNumber,
+  tokenTransfers: asOptional(asArray(asBlockbookTokenTransfer)),
+  ethereumSpecific: asObject({
+    status: asNumber,
+    gasLimit: asNumber,
+    gasUsed: asNumber,
+    gasPrice: asString
+  })
+})
+
+export type BlockbookTx = $Call<typeof asBlockbookTx>
+
+export const asBlockbookTokenBalance = asObject({
+  symbol: asString,
+  contract: asString,
+  balance: asString
+})
+
+export type BlockbookTokenBalance = $Call<typeof asBlockbookTokenBalance>
+
+export const asBlockbookAddress = asObject({
+  page: asNumber,
+  totalPages: asNumber,
+  itemsOnPage: asNumber,
+  balance: asString,
+  unconfirmedBalance: asString,
+  unconfirmedTxs: asNumber,
+  transactions: asUnknown,
+  nonce: asString,
+  tokens: asUnknown
+})
+
+export type BlockbookAddress = $Call<typeof asBlockbookAddress>
 
 export const asAlethioAccountsTokenTransfer = asObject({
   type: asString,
@@ -349,3 +410,9 @@ export const asEtherscanGetAccountBalance = asObject({
 export type EtherscanGetAccountBalance = $Call<
   typeof asEtherscanGetAccountBalance
 >
+
+export const asCheckTokenBalRpc = asObject({
+  result: asString
+})
+
+export type CheckTokenBalRpc = $Call<typeof asCheckTokenBalRpc>

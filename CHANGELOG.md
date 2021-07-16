@@ -1,5 +1,186 @@
 # edge-currency-accountbased
 
+# 0.7.62 (2021-06-08)
+
+- FIO: Randomize apiUrl when sending a new request
+
+# 0.7.61 (2021-06-03)
+
+- FIO: Add ALREADY_REGISTERED error rype
+- Prevent unnecessary fetch calls when amberdata server lists are empty
+- Remove icon URLs
+
+# 0.7.60 (2021-05-25)
+
+- Fix a possible race condition where the last queried block height is saved but the actual transactions are not
+- Always set this.walletLocalDataDirty = true if any transactions have changed
+- ETH: Use the default token gas limit if getCode reveals the destination is a contract and estimateGas fails to return a gas value
+- ETH: Allow ethgasstation safeLow estimate less than 1
+- Update logging
+
+# 0.7.59 (2021-05-25)
+
+- XRP: Remove bogus length checks from the XRP key import
+- FIO: Refactor SDK initialization so it's only started once per wallet
+
+# 0.7.58 (2021-05-12)
+
+- XRP: Change destination tag limit to 10 digits and less than UINT32
+
+# 0.7.57 (2021-05-11)
+
+- FTM: Add fUSDT support
+- XRP: Pass default fee to preparePayment
+- XRP: Remove unused 'type' field from transaction validation
+
+# 0.7.56 (2021-05-07)
+
+- Fix metadata issue for accelerated ETH txs (RBF tx)
+- Add Fantom
+
+# 0.7.55 (2021-05-03)
+
+- Remove allowance transaction filtering from addTransaction
+
+# 0.7.54 (2021-04-23)
+
+- ETH: Add error reporting to tx lists and gas price query for future debugging
+- FIO: Reduce logging verbosity
+- BNB: Enable resync
+- Upgrade edge-core-js to v0.17.31
+  - Add additional log types `crash` and `breadcrumb`
+
+# 0.7.53 (2021-04-19)
+
+- FIO: Change some error logging levels from error to info to reduce log verbosity
+
+# 0.7.52 (2021-04-12)
+
+- ETH: Add UNI ERC20 token
+- ETH: Add eth_call to token balance loop
+- FIO: Logging cleanup
+- FIO: Allow sending tokens without transactionJson or otherParams
+
+# 0.7.51 (2021-04-01)
+
+- XRP: Use default fee of (0.00001 XRP) if SDK is unable to query for recommended fee
+- Update content URL
+
+# 0.7.50 (2021-03-16)
+
+- FIO: Refactor FIO action to be passed in otherParams of edgeSpendInfo
+
+# 0.7.49 (2021-03-15)
+
+- EOS: Add dfuse graphql API to search for transactions
+- ETH: Add new Golem token GLM
+- Add promiseNy util to verify API responses from multiple sources
+- Add contract address checking to Blockbook
+
+# 0.7.48 (2021-02-26)
+
+- EOS: Add dfuse API to getKeyAccounts method
+- ETH: Double gas limit estimates when sending ETH to a contract address
+
+# 0.7.47 (2021-02-23)
+
+- ETH: Fix RBF bug: Use correct currencyCode for tx lookup in ethEngine saveTx
+- FIO: Added transfer address action
+
+# 0.7.46 (2021-02-12)
+
+- Fix variable typo
+
+# 0.7.45 (2021-02-11)
+
+- Add DeFi ERC20 tokens
+- Update FIO server list
+- Add additional logging
+
+# 0.7.44 (2021-02-02)
+
+- ETH: Bump max gas limit to 300000
+- ETH: Add additional estimateGas params that cloudflare requires
+- ETH: Put RPC error handling in multicastServers
+- ETH: Throw error when custom fee isn't valid or doesn't reach network minimums
+
+# 0.7.43 (2021-01-25)
+
+- EOS: Fix get_key_accounts endpoint and enforce 12 character rule on new account names
+- Adjust log levels
+- Update to eslint-config-standard-kit to v0.15.1
+
+# 0.7.42 (2021-01-02)
+
+- Add WBTC
+- Fix Aave token parameters
+
+# 0.7.41 (2021-01-01)
+
+- Capitalize Aave token codes
+
+# 0.7.40 (2020-12-31)
+
+- Add Aave ERC20 tokens
+- FIO: Add additional domain transfer transaction
+
+# 0.7.39 (2020-12-21)
+
+- Double gas estimate when sending ETH to a contract to reduce chance of failure
+- FIO logging cleanup
+
+# 0.7.38 (2020-12-13)
+
+- Update ANT contract address and rename original token ANTV1
+
+# 0.7.37 (2020-12-09)
+
+- EOS: Ignore bogus accounts getting returned by nodes
+
+# 0.7.36 (2020-12-07)
+
+- Remove eosrio from hyperion server list
+
+# 0.7.35 (2020-12-04)
+
+- FIO: Refactored multicast servers, add preparedTrx support, Removed non-SSL FIO servers
+- Used fetchCors for Trezor blookbook server
+
+# 0.7.34 (2020-11-23)
+
+- Add Blockbook API support for Ethereum
+- Disable Alethio API support
+- Remove Supereth API support
+
+# 0.7.33 (2020-11-18)
+
+- Fix EOSIO metaToken send issues (contractAddress and denom)
+
+# 0.7.32 (2020-11-16)
+
+- WAX changes
+  - Remove unnecessary logs and pass in token data to multiple routines
+  - Enable adding token and fetching token balance for EOSIO chains
+  - Merge in EOSIO token implementation
+  - Fix erroneous WAX activation call and publicKey typo
+
+# 0.7.31 (2020-11-11)
+
+- WAX Integration
+  - Update endpoint for finding EOSIO account by key
+  - Initial WAX integration
+  - Remove unnecessary comments and disable Greymass Fuel for Telos
+  - Enable WAX activation process
+  - Move WAX activation to eosEngine and attempt activation on engine start
+  - Adjustment to EosFuel routine
+  - Make singleApiActivation private for Wax
+- FIO changes:
+  - Check if domain is public
+  - Check for transferred addresses/domains.
+  - Transfer fio domain changes.
+  - Removed FIO str from logs.
+- RBF support for ETH, RSK, and ETH tokens
+
 # 0.7.30 (2020-10-08)
 
 - Add onAddressChanged callback to EOS to inform GUI of new account activation

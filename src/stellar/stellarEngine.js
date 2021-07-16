@@ -17,6 +17,7 @@ import {
 import { CurrencyEngine } from '../common/engine.js'
 import {
   asyncWaterfall,
+  cleanTxLogs,
   getDenomInfo,
   getOtherParams,
   promiseAny
@@ -129,7 +130,7 @@ export class StellarEngine extends CurrencyEngine {
   }
 
   async processTransaction(tx: StellarOperation): Promise<string> {
-    const ourReceiveAddresses: Array<string> = []
+    const ourReceiveAddresses: string[] = []
 
     let currencyCode = ''
     let exchangeAmount = ''
@@ -164,7 +165,7 @@ export class StellarEngine extends CurrencyEngine {
       rawTx = await tx.transaction()
       networkFee = rawTx.fee_charged.toString()
     } catch (e) {
-      this.log(e)
+      this.log.error(`processTransaction rawTx Error ${e}`)
       throw e
     }
 
@@ -250,9 +251,9 @@ export class StellarEngine extends CurrencyEngine {
           this.tokenCheckTransactionsStatus.XLM = 1
           this.updateOnAddressesChecked()
         } else {
-          this.log(`Error fetching transaction info: ${JSON.stringify(e)}`)
-          this.log(`e.code: ${JSON.stringify(e.code)}`)
-          this.log(`e.message: ${JSON.stringify(e.message)}`)
+          this.log.error(
+            `checkTransactionsInnerLoop Error fetching transaction info: ${e}`
+          )
         }
         return
       }
@@ -307,6 +308,7 @@ export class StellarEngine extends CurrencyEngine {
             this.walletLocalData.totalBalances[currencyCode] !== nativeAmount
           ) {
             this.walletLocalData.totalBalances[currencyCode] = nativeAmount
+            this.log.warn(`Updated ${currencyCode} balance ${nativeAmount}`)
             this.currencyEngineCallbacks.onBalanceChanged(
               currencyCode,
               nativeAmount
@@ -322,9 +324,9 @@ export class StellarEngine extends CurrencyEngine {
         this.tokenCheckBalanceStatus.XLM = 1
         this.updateOnAddressesChecked()
       } else {
-        this.log(`Error fetching address info: ${JSON.stringify(e)}`)
-        this.log(`e.code: ${JSON.stringify(e.code)}`)
-        this.log(`e.message: ${JSON.stringify(e.message)}`)
+        this.log.error(
+          `checkAccountInnerLoop Error fetching address info: ${e}`
+        )
       }
     }
   }
@@ -343,7 +345,7 @@ export class StellarEngine extends CurrencyEngine {
         }
       })
       .catch(e => {
-        this.log(e)
+        this.log.error(`checkBlockchainInnerLoop Error ${e}`)
       })
   }
 
@@ -374,12 +376,8 @@ export class StellarEngine extends CurrencyEngine {
   }
 
   async makeSpend(edgeSpendInfoIn: EdgeSpendInfo) {
-    const {
-      edgeSpendInfo,
-      currencyCode,
-      nativeBalance,
-      denom
-    } = super.makeSpend(edgeSpendInfoIn)
+    const { edgeSpendInfo, currencyCode, nativeBalance, denom } =
+      super.makeSpend(edgeSpendInfoIn)
 
     if (edgeSpendInfo.spendTargets.length !== 1) {
       throw new Error('Error: only one output allowed')
@@ -481,9 +479,9 @@ export class StellarEngine extends CurrencyEngine {
       delete this.pendingTransactionsMap[this.pendingTransactionsIndex - 20]
     }
 
-    this.log('Stellar transaction prepared')
-    this.log(`idInternal: ${idInternal}`)
-    this.log(
+    this.log.warn('Stellar transaction prepared')
+    this.log.warn(`idInternal: ${idInternal}`)
+    this.log.warn(
       `${nativeAmount} ${this.walletLocalData.publicKey} -> ${publicAddress}`
     )
     return edgeTransaction
@@ -499,15 +497,18 @@ export class StellarEngine extends CurrencyEngine {
       if (!transaction) {
         throw new Error('ErrorInvalidTransaction')
       }
-      this.log('Signing...')
+      this.log.warn('Signing...')
       const keypair = this.stellarApi.Keypair.fromSecret(
         this.walletInfo.keys.stellarKey
       )
       await transaction.sign(keypair)
     } catch (e) {
-      this.log(e)
+      this.log.error(
+        `FAILURE signTx\n${JSON.stringify(cleanTxLogs(edgeTransaction))} ${e}`
+      )
       throw e
     }
+    this.log.warn(`signTx\n${cleanTxLogs(edgeTransaction)}`)
     return edgeTransaction
   }
 
@@ -522,7 +523,7 @@ export class StellarEngine extends CurrencyEngine {
       if (!transaction) {
         throw new Error('ErrorInvalidTransaction')
       }
-      this.log('Broadcasting...')
+      this.log.warn(`Broadcasting...\n${cleanTxLogs(edgeTransaction)}`)
       const result = await this.multicastServers(
         'submitTransaction',
         transaction
@@ -532,8 +533,13 @@ export class StellarEngine extends CurrencyEngine {
       this.activatedAccountsCache[otherParams.toAddress] = true
       this.otherData.accountSequence++
       this.walletLocalDataDirty = true
+      this.log.warn(`SUCCESS broadcastTx\n${cleanTxLogs(edgeTransaction)}`)
     } catch (e) {
-      this.log(e)
+      this.log.error(
+        `FAILURE broadcastTx\n${JSON.stringify(
+          cleanTxLogs(edgeTransaction)
+        )} ${e}`
+      )
       throw e
     }
     return edgeTransaction

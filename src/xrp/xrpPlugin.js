@@ -57,15 +57,16 @@ export class XrpPlugin extends CurrencyPlugin {
 
   async connectApi(walletId: string): Promise<void> {
     if (!this.rippleApi.serverName) {
-      const funcs = this.currencyInfo.defaultSettings.otherSettings.rippledServers.map(
-        server => async () => {
-          const api = new RippleAPI({ server })
-          api.serverName = server
-          const result = await api.connect()
-          const out = { server, result, api }
-          return out
-        }
-      )
+      const funcs =
+        this.currencyInfo.defaultSettings.otherSettings.rippledServers.map(
+          server => async () => {
+            const api = new RippleAPI({ server })
+            api.serverName = server
+            const result = await api.connect()
+            const out = { server, result, api }
+            return out
+          }
+        )
       const result = await asyncWaterfall(funcs)
       if (!this.rippleApi.serverName) {
         this.rippleApi = result.api
@@ -82,14 +83,18 @@ export class XrpPlugin extends CurrencyPlugin {
     }
   }
 
-  importPrivateKey(privateKey: string): Promise<{ rippleKey: string }> {
-    privateKey.replace(/ /g, '')
-    if (privateKey.length !== 29 && privateKey.length !== 31) {
-      throw new Error('Private key wrong length')
+  async importPrivateKey(privateKey: string): Promise<{ rippleKey: string }> {
+    privateKey = privateKey.replace(/\s/g, '')
+    try {
+      // Try deriving an address from the key:
+      const keypair = keypairs.deriveKeypair(privateKey)
+      keypairs.deriveAddress(keypair.publicKey)
+
+      // If that worked, return the key:
+      return { rippleKey: privateKey }
+    } catch (error) {
+      throw new Error('Invalid private key: ' + String(error))
     }
-    const keypair = keypairs.deriveKeypair(privateKey)
-    keypairs.deriveAddress(keypair.publicKey)
-    return Promise.resolve({ rippleKey: privateKey })
   }
 
   async createPrivateKey(walletType: string): Promise<Object> {
@@ -99,8 +104,8 @@ export class XrpPlugin extends CurrencyPlugin {
       const algorithm =
         type === 'ripple-secp256k1' ? 'ecdsa-secp256k1' : 'ed25519'
       const entropy = Array.from(this.io.random(32))
-      const server = this.currencyInfo.defaultSettings.otherSettings
-        .rippledServers[0]
+      const server =
+        this.currencyInfo.defaultSettings.otherSettings.rippledServers[0]
       const api = new RippleAPI({ server })
       const address = api.generateAddress({
         algorithm,

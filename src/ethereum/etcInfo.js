@@ -6,7 +6,6 @@ import type {
   EdgeCurrencyInfo
 } from 'edge-core-js/types'
 
-import { imageServerUrl } from '../common/utils'
 import { makeEthereumBasedPluginInner } from './ethPlugin'
 import type { EthereumSettings } from './ethTypes.js'
 
@@ -14,7 +13,8 @@ const defaultNetworkFees = {
   default: {
     gasLimit: {
       regularTransaction: '21000',
-      tokenTransaction: '200000'
+      tokenTransaction: '200000',
+      minGasLimit: '21000'
     },
     gasPrice: {
       lowFee: '1000000001',
@@ -22,7 +22,8 @@ const defaultNetworkFees = {
       standardFeeHigh: '300000000001',
       standardFeeLowAmount: '100000000000000000',
       standardFeeHighAmount: '10000000000000000000',
-      highFee: '40000000001'
+      highFee: '40000000001',
+      minGasPrice: '1000000000'
     }
   },
   '1983987abc9837fbabc0982347ad828': {
@@ -51,7 +52,7 @@ const otherSettings: EthereumSettings = {
   rpcServers: ['https://www.ethercluster.com/etc'],
   etherscanApiServers: ['https://blockscout.com/etc/mainnet'],
   blockcypherApiServers: [],
-  superethServers: [],
+  blockbookServers: [],
   uriNetworks: ['ethereumclassic', 'etherclass'],
   ercTokenStandard: 'ERC20',
   chainId: 61,
@@ -100,8 +101,6 @@ export const currencyInfo: EdgeCurrencyInfo = {
       symbol: 'mΞ'
     }
   ],
-  symbolImage: `${imageServerUrl}/ethereum-classic-logo-solo-64.png`,
-  symbolImageDarkMono: `${imageServerUrl}/ethereum-classic-logo-solo-64.png`,
   metaTokens: [
     // Array of objects describing the supported metatokens
   ]

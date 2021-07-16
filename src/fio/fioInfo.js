@@ -3,13 +3,10 @@
 
 import { type EdgeCurrencyInfo } from 'edge-core-js/types'
 
-import { imageServerUrl } from '../common/utils'
-
 const defaultSettings: any = {
   apiUrls: [
     'https://fio.eu.eosamsterdam.net/v1/',
     'https://fio.eosdac.io/v1/',
-    'http://fioapi.nodeone.io:6881/v1/',
     'https://fio.eosphere.io/v1/',
     'https://fio.eosrio.io/v1/',
     'https://fio.acherontrading.com/v1/',
@@ -25,12 +22,10 @@ const defaultSettings: any = {
     'https://api.fio.currencyhub.io/v1/',
     'https://fio.eoscannon.io/v1/',
     'https://fio.eosdublin.io/v1/',
-    'https://api.fiosweden.org/v1/',
-    'https://fio.maltablock.org/v1/'
+    'https://api.fiosweden.org/v1/'
   ],
   historyNodeUrls: [
     'https://fio.greymass.com/v1/',
-    'http://api.fio.eosdetroit.io/v1/',
     'https://fio.greymass.com/v1/',
     'https://fio.eosphere.io/v1/',
     'https://fio.eossweden.org/v1/'
@@ -43,8 +38,13 @@ const defaultSettings: any = {
   freeAddressRef: 'edgefree',
   errorCodes: {
     INVALID_FIO_ADDRESS: 'INVALID_FIO_ADDRESS',
+    ALREADY_REGISTERED: 'ALREADY_REGISTERED',
     FIO_ADDRESS_IS_NOT_EXIST: 'FIO_ADDRESS_IS_NOT_EXIST',
-    FIO_ADDRESS_IS_NOT_LINKED: 'FIO_ADDRESS_IS_NOT_LINKED'
+    FIO_DOMAIN_IS_NOT_EXIST: 'FIO_DOMAIN_IS_NOT_EXIST',
+    FIO_DOMAIN_IS_NOT_PUBLIC: 'FIO_DOMAIN_IS_NOT_PUBLIC',
+    IS_DOMAIN_PUBLIC_ERROR: 'IS_DOMAIN_PUBLIC_ERROR',
+    FIO_ADDRESS_IS_NOT_LINKED: 'FIO_ADDRESS_IS_NOT_LINKED',
+    SERVER_ERROR: 'SERVER_ERROR'
   }
 }
 
@@ -68,7 +68,5 @@ export const currencyInfo: EdgeCurrencyInfo = {
       symbol: 'ᵮ'
     }
   ],
-  symbolImage: `${imageServerUrl}/fio-logo-solo-64.png`,
-  symbolImageDarkMono: `${imageServerUrl}/fio-logo-solo-64.png`,
   metaTokens: []
 }

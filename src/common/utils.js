@@ -5,6 +5,7 @@
 
 import { bns } from 'biggystring'
 import { Buffer } from 'buffer'
+import { asArray, asObject, asOptional, asString } from 'cleaners'
 import {
   type EdgeCurrencyInfo,
   type EdgeMetaToken,
@@ -25,7 +26,7 @@ function addHexPrefix(value: string) {
   }
 }
 
-function shuffleArray(array: Array<any>) {
+function shuffleArray(array: any[]) {
   let currentIndex = array.length
   let temporaryValue, randomIndex
 
@@ -76,6 +77,25 @@ export function hexToBuf(hex: string) {
   return buf
 }
 
+export function padHex(hex: string, bytes: number) {
+  if (2 * bytes - hex.length > 0) {
+    return hex.padStart(2 * bytes, '0')
+  }
+  return hex
+}
+
+export function removeHexPrefix(value: string) {
+  if (value.indexOf('0x') === 0) {
+    return value.substring(2)
+  } else {
+    return value
+  }
+}
+
+export function hexToDecimal(num: string) {
+  return bns.add(num, '0', 10)
+}
+
 export function bufToHex(buf: any) {
   const signedTxBuf = Buffer.from(buf)
   const hex = '0x' + signedTxBuf.toString('hex')
@@ -85,7 +105,7 @@ export function bufToHex(buf: any) {
 function getDenomInfo(
   currencyInfo: EdgeCurrencyInfo,
   denom: string,
-  customTokens?: Array<EdgeMetaToken>
+  customTokens?: EdgeMetaToken[]
 ) {
   // Look in the primary currency denoms
   let edgeDenomination = currencyInfo.denominations.find(element => {
@@ -123,7 +143,7 @@ const snoozeReject: Function = (ms: number) =>
 const snooze: Function = (ms: number) =>
   new Promise((resolve: Function) => setTimeout(resolve, ms))
 
-function promiseAny(promises: Array<Promise<any>>): Promise<any> {
+function promiseAny(promises: Promise<any>[]): Promise<any> {
   return new Promise((resolve: Function, reject: Function) => {
     let pending = promises.length
     for (const promise of promises) {
@@ -139,14 +159,82 @@ function promiseAny(promises: Array<Promise<any>>): Promise<any> {
   })
 }
 
+/**
+ * Waits for the promises to resolve and uses a provided checkResult function
+ * to return a key to identify the result. The returned promise resolves when
+ * n number of promises resolve to identical keys.
+ */
+async function promiseNy<T>(
+  promises: Promise<T>[],
+  checkResult: T => string | void,
+  n?: number = promises.length
+): Promise<T> {
+  const map: { [key: string]: number } = {}
+  return new Promise((resolve, reject) => {
+    let resolved = 0
+    let failed = 0
+    let done = false
+    for (const promise of promises) {
+      promise.then(
+        result => {
+          const key = checkResult(result)
+          if (key !== undefined) {
+            resolved++
+            if (map[key] !== undefined) {
+              map[key]++
+            } else {
+              map[key] = 1
+            }
+            if (!done && map[key] >= n) {
+              done = true
+              resolve(result)
+            }
+          } else if (++failed + resolved === promises.length) {
+            reject(Error('Could not resolve n promises'))
+          }
+        },
+        error => {
+          if (++failed + resolved === promises.length) {
+            reject(error)
+          }
+        }
+      )
+    }
+  })
+}
+
+/**
+ * If the promise doesn't resolve in the given time,
+ * reject it with the provided error, or a generic error if none is provided.
+ */
+function timeout<T>(
+  promise: Promise<T>,
+  ms: number,
+  error: Error = new Error(`Timeout of ${ms}ms exceeded`)
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(error), ms)
+    promise.then(
+      ok => {
+        resolve(ok)
+        clearTimeout(timer)
+      },
+      error => {
+        reject(error)
+        clearTimeout(timer)
+      }
+    )
+  })
+}
+
 type AsyncFunction = void => Promise<any>
 
 async function asyncWaterfall(
-  asyncFuncs: Array<AsyncFunction>,
+  asyncFuncs: AsyncFunction[],
   timeoutMs: number = 5000
 ): Promise<any> {
   let pending = asyncFuncs.length
-  const promises: Array<Promise<any>> = []
+  const promises: Promise<any>[] = []
   for (const func of asyncFuncs) {
     const index = promises.length
     promises.push(
@@ -184,7 +272,7 @@ async function asyncWaterfall(
   }
 }
 
-export function pickRandom<T>(list: Array<T>, count: number): Array<T> {
+export function pickRandom<T>(list: T[], count: number): T[] {
   if (list.length <= count) return list
 
   // Algorithm from https://stackoverflow.com/a/48089/1836596
@@ -199,8 +287,6 @@ export function pickRandom<T>(list: Array<T>, count: number): Array<T> {
 function getEdgeInfoServer() {
   return 'https://info1.edgesecure.co:8444'
 }
-
-const imageServerUrl = 'https://developer.airbitz.co/content'
 
 /**
  * Safely read `otherParams` from a transaction, throwing if it's missing.
@@ -240,6 +326,32 @@ export function makeMutex(): Mutex {
   }
 }
 
+const asCleanTxLogs = asObject({
+  txid: asString,
+  spendTargets: asOptional(
+    asArray(
+      asObject({
+        currencyCode: asString,
+        nativeAmount: asString,
+        publicAddress: asString,
+        uniqueIdentifier: asOptional(asString)
+      })
+    )
+  ),
+  signedTx: asString,
+  otherParams: asOptional(
+    asObject({
+      gas: asOptional(asString),
+      gasPrice: asOptional(asString),
+      nonceUsed: asOptional(asString)
+    })
+  )
+})
+
+export function cleanTxLogs(tx: EdgeTransaction) {
+  return JSON.stringify(asCleanTxLogs(tx), null, 2)
+}
+
 export {
   normalizeAddress,
   addHexPrefix,
@@ -251,5 +363,6 @@ export {
   snoozeReject,
   getEdgeInfoServer,
   promiseAny,
-  imageServerUrl
+  promiseNy,
+  timeout
 }

@@ -5,8 +5,6 @@ import type { EdgeCurrencyInfo } from 'edge-core-js/types'
 
 import type { BinanceSettings } from './bnbTypes.js'
 
-export const imageServerUrl = 'https://developer.airbitz.co/content'
-
 const otherSettings: BinanceSettings = {
   binanceApiServers: ['https://dex.binance.org']
 }
@@ -36,7 +34,5 @@ export const currencyInfo: EdgeCurrencyInfo = {
       symbol: 'B'
     }
   ],
-  symbolImage: `${imageServerUrl}/binance-coin-logo-solo-64.png`,
-  symbolImageDarkMono: `${imageServerUrl}/binance-coin-logo-solo-64.png`,
   metaTokens: []
 }

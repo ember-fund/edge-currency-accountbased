@@ -36,7 +36,7 @@ import {
   TXID_MAP_FILE,
   WalletLocalData
 } from './types.js'
-import { getDenomInfo, isHex, normalizeAddress } from './utils.js'
+import { cleanTxLogs, getDenomInfo, normalizeAddress } from './utils.js'
 
 const SAVE_DATASTORE_MILLISECONDS = 10000
 const MAX_TRANSACTIONS = 1000
@@ -55,13 +55,13 @@ export class CurrencyEngine {
   walletLocalDataDirty: boolean
   transactionListDirty: boolean
   transactionsLoaded: boolean
-  transactionList: { [currencyCode: string]: Array<EdgeTransaction> }
+  transactionList: { [currencyCode: string]: EdgeTransaction[] }
   txIdMap: { [currencyCode: string]: { [txid: string]: number } } // Maps txid to index of tx in
-  txIdList: { [currencyCode: string]: Array<string> } // Map of array of txids in chronological order
-  transactionsChangedArray: Array<EdgeTransaction> // Transactions that have changed and need to be added
+  txIdList: { [currencyCode: string]: string[] } // Map of array of txids in chronological order
+  transactionsChangedArray: EdgeTransaction[] // Transactions that have changed and need to be added
   currencyInfo: EdgeCurrencyInfo
-  allTokens: Array<EdgeMetaToken>
-  customTokens: Array<EdgeMetaToken>
+  allTokens: EdgeMetaToken[]
+  customTokens: EdgeMetaToken[]
   currentSettings: any
   timers: any
   walletId: string
@@ -172,13 +172,17 @@ export class CurrencyEngine {
       const result = await disklet.getText(TRANSACTION_STORE_FILE)
       transactionList = JSON.parse(result)
     } catch (e) {
-      this.log(
-        'Could not load transactionList file. Failure is ok on new device'
-      )
-      await disklet.setText(
-        TRANSACTION_STORE_FILE,
-        JSON.stringify(this.transactionList)
-      )
+      if (e.code === 'ENOENT') {
+        this.log(
+          'Could not load transactionList file. Failure is ok on new device'
+        )
+        await disklet.setText(
+          TRANSACTION_STORE_FILE,
+          JSON.stringify(this.transactionList)
+        )
+      } else {
+        this.log.crash(e, this.walletLocalData)
+      }
     }
 
     let isEmptyTransactions = true
@@ -188,6 +192,31 @@ export class CurrencyEngine {
         break
       }
     }
+
+    for (const cc of Object.keys(this.transactionList)) {
+      if (
+        this.transactionList[cc] !== undefined &&
+        this.transactionList[cc].length > 0
+      ) {
+        if (
+          transactionList !== undefined &&
+          transactionList[cc] !== undefined &&
+          transactionList[cc].length < this.transactionList[cc].length
+        ) {
+          this.log.crash(
+            new Error(
+              `Transaction list length mismatch for ${cc}: on disk ${transactionList[cc].length} txs < in memory ${this.transactionList[cc].length} txs`
+            ),
+            {
+              ...transactionList,
+              ...this.transactionList,
+              ...this.walletLocalData
+            }
+          )
+        }
+      }
+    }
+
     if (isEmptyTransactions) {
       // Easy, just copy everything over
       this.transactionList = transactionList || this.transactionList
@@ -202,9 +231,8 @@ export class CurrencyEngine {
       }
     }
     for (const currencyCode in this.transactionList) {
-      this.walletLocalData.numTransactions[currencyCode] = this.transactionList[
-        currencyCode
-      ].length
+      this.walletLocalData.numTransactions[currencyCode] =
+        this.transactionList[currencyCode].length
     }
   }
 
@@ -228,7 +256,6 @@ export class CurrencyEngine {
       this.walletLocalData.publicKey = this.walletInfo.keys.publicKey
     } catch (err) {
       try {
-        this.log(err)
         this.log('No walletLocalData setup yet: Failure is ok')
         this.walletLocalData = new WalletLocalData(
           null,
@@ -240,7 +267,9 @@ export class CurrencyEngine {
           JSON.stringify(this.walletLocalData)
         )
       } catch (e) {
-        this.log('Error writing to localDataStore. Engine not started:' + err)
+        this.log.error(
+          'Error writing to localDataStore. Engine not started:' + err
+        )
         throw e
       }
     }
@@ -282,14 +311,6 @@ export class CurrencyEngine {
     lastSeenTime?: number
   ) {
     this.log('executing addTransaction: ', edgeTransaction.txid)
-    // remove SPAM and proxy allowance transactions (ie DEX extra transaction)
-    // this should reduce confusion for users
-    if (
-      edgeTransaction.nativeAmount === '0' &&
-      edgeTransaction.networkFee === '0'
-    ) {
-      return
-    }
     // set otherParams if not already set
     if (!edgeTransaction.otherParams) {
       edgeTransaction.otherParams = {}
@@ -330,13 +351,13 @@ export class CurrencyEngine {
       }
       // add transaction to list of tx's, and array of changed transactions
       this.transactionList[currencyCode].push(edgeTransaction)
-      this.walletLocalData.numTransactions[currencyCode] = this.transactionList[
-        currencyCode
-      ].length
+      this.walletLocalData.numTransactions[currencyCode] =
+        this.transactionList[currencyCode].length
       this.walletLocalDataDirty = true
 
       this.transactionListDirty = true
       this.transactionsChangedArray.push(edgeTransaction)
+      this.log.warn('addTransaction new tx: ', edgeTransaction.txid)
     } else {
       // Already have this tx in the database. See if anything changed
       const transactionsArray = this.transactionList[currencyCode]
@@ -362,14 +383,14 @@ export class CurrencyEngine {
           edgeTx.blockHeight === 0
         ) {
           this.walletLocalData.numUnconfirmedSpendTxs--
-          this.walletLocalDataDirty = true
         }
         if (edgeTx.date !== edgeTransaction.date) {
           needsReSort = true
         }
-        this.log(
-          `Update transaction: ${edgeTransaction.txid} height:${edgeTransaction.blockHeight}`
+        this.log.warn(
+          `addTransaction: update ${edgeTransaction.txid} height:${edgeTransaction.blockHeight}`
         )
+        this.walletLocalDataDirty = true
         this.updateTransaction(currencyCode, edgeTransaction, idx)
       } else {
         // this.log(sprintf('Old transaction. No Update: %s', tx.hash))
@@ -384,7 +405,7 @@ export class CurrencyEngine {
     // Sort
     this.transactionList[currencyCode].sort(this.sortTxByDate)
     // Add to txidMap
-    const txIdList: Array<string> = []
+    const txIdList: string[] = []
     let i = 0
     for (const tx of this.transactionList[currencyCode]) {
       if (!this.txIdMap[currencyCode]) {
@@ -458,7 +479,7 @@ export class CurrencyEngine {
     this.transactionList[currencyCode][idx] = edgeTransaction
     this.transactionListDirty = true
     this.transactionsChangedArray.push(edgeTransaction)
-    this.log('updateTransaction:' + edgeTransaction.txid)
+    this.log.warn('updateTransaction:' + edgeTransaction.txid)
   }
 
   // *************************************
@@ -467,49 +488,45 @@ export class CurrencyEngine {
   async saveWalletLoop() {
     const disklet = this.walletLocalDisklet
     const promises = []
-    if (this.walletLocalDataDirty) {
-      this.log('walletLocalDataDirty. Saving...')
-      const jsonString = JSON.stringify(this.walletLocalData)
-      promises.push(
-        disklet
-          .setText(DATA_STORE_FILE, jsonString)
-          .then(() => {
-            this.walletLocalDataDirty = false
-          })
-          .catch(e => {
-            this.log('Error saving walletLocalData')
-            this.log(e)
-          })
-      )
-    }
     if (this.transactionListDirty) {
       await this.loadTransactions()
       this.log('transactionListDirty. Saving...')
       let jsonString = JSON.stringify(this.transactionList)
       promises.push(
         disklet.setText(TRANSACTION_STORE_FILE, jsonString).catch(e => {
-          this.log('Error saving transactionList')
-          this.log(e)
+          this.log.error('Error saving transactionList')
+          this.log.error(e)
         })
       )
       jsonString = JSON.stringify(this.txIdList)
       promises.push(
         disklet.setText(TXID_LIST_FILE, jsonString).catch(e => {
-          this.log('Error saving txIdList')
-          this.log(e)
+          this.log.error('Error saving txIdList')
+          this.log.error(e)
         })
       )
       jsonString = JSON.stringify(this.txIdMap)
       promises.push(
         disklet.setText(TXID_MAP_FILE, jsonString).catch(e => {
-          this.log('Error saving txIdMap')
-          this.log(e)
+          this.log.error('Error saving txIdMap')
+          this.log.error(e)
         })
       )
       await Promise.all(promises)
       this.transactionListDirty = false
-    } else {
-      await Promise.all(promises)
+    }
+    if (this.walletLocalDataDirty) {
+      this.log('walletLocalDataDirty. Saving...')
+      const jsonString = JSON.stringify(this.walletLocalData)
+      await disklet
+        .setText(DATA_STORE_FILE, jsonString)
+        .then(() => {
+          this.walletLocalDataDirty = false
+        })
+        .catch(e => {
+          this.log.error('Error saving walletLocalData')
+          this.log.error(e)
+        })
     }
   }
 
@@ -521,7 +538,11 @@ export class CurrencyEngine {
           this.walletLocalData.totalBalances[currencyCode]
         )
       } catch (e) {
-        this.log('Error for currencyCode', currencyCode, e)
+        this.log.error(
+          'doInitialBalanceCallback Error for currencyCode',
+          currencyCode,
+          e
+        )
       }
     }
   }
@@ -533,7 +554,11 @@ export class CurrencyEngine {
           this.transactionList[currencyCode]
         )
       } catch (e) {
-        this.log('Error for currencyCode', currencyCode, e)
+        this.log.error(
+          'doInitialTransactionsCallback Error for currencyCode',
+          currencyCode,
+          e
+        )
       }
     }
   }
@@ -543,7 +568,7 @@ export class CurrencyEngine {
       // $FlowFixMe
       await this[func]()
     } catch (e) {
-      this.log('Error in Loop:', func, e)
+      this.log.error('Error in Loop:', func, e)
     }
     if (this.engineOn) {
       this.timers[func] = setTimeout(() => {
@@ -634,7 +659,7 @@ export class CurrencyEngine {
     return parseInt(this.walletLocalData.blockHeight)
   }
 
-  enableTokensSync(tokens: Array<string>) {
+  enableTokensSync(tokens: string[]) {
     for (const token of tokens) {
       if (this.walletLocalData.enabledTokens.indexOf(token) === -1) {
         this.walletLocalData.enabledTokens.push(token)
@@ -646,11 +671,11 @@ export class CurrencyEngine {
     }
   }
 
-  async enableTokens(tokens: Array<string>) {
+  async enableTokens(tokens: string[]) {
     this.enableTokensSync(tokens)
   }
 
-  disableTokensSync(tokens: Array<string>) {
+  disableTokensSync(tokens: string[]) {
     for (const token of tokens) {
       if (token === this.currencyInfo.currencyCode) {
         continue
@@ -666,15 +691,15 @@ export class CurrencyEngine {
     }
   }
 
-  async disableTokens(tokens: Array<string>) {
+  async disableTokens(tokens: string[]) {
     this.disableTokensSync(tokens)
   }
 
-  async getEnabledTokens(): Promise<Array<string>> {
+  async getEnabledTokens(): Promise<string[]> {
     return this.walletLocalData.enabledTokens
   }
 
-  async addCustomToken(obj: CustomToken) {
+  async addCustomToken(obj: CustomToken, contractAddress?: string) {
     checkCustomToken(obj)
 
     const tokenObj: CustomToken = obj
@@ -704,13 +729,6 @@ export class CurrencyEngine {
     ) {
       throw new Error('ErrorInvalidMultiplier')
     }
-    let contractAddress = tokenObj.contractAddress
-      .replace('0x', '')
-      .toLowerCase()
-    if (!isHex(contractAddress) || contractAddress.length !== 40) {
-      throw new Error('ErrorInvalidContractAddress')
-    }
-    contractAddress = '0x' + contractAddress
 
     for (const tk of this.customTokens) {
       if (
@@ -736,7 +754,7 @@ export class CurrencyEngine {
       currencyCode: tokenObj.currencyCode,
       currencyName: tokenObj.currencyName,
       denominations: [denom],
-      contractAddress
+      contractAddress: contractAddress || tokenObj.contractAddress
     }
 
     this.customTokens.push(edgeMetaToken)
@@ -772,7 +790,7 @@ export class CurrencyEngine {
 
   async getTransactions(
     options: EdgeGetTransactionsOptions
-  ): Promise<Array<EdgeTransaction>> {
+  ): Promise<EdgeTransaction[]> {
     const cleanOptions = asCurrencyCodeOptions(options)
     const { currencyCode = this.currencyInfo.currencyCode } = cleanOptions
 
@@ -822,7 +840,7 @@ export class CurrencyEngine {
     return { publicAddress: this.walletLocalData.publicKey }
   }
 
-  addGapLimitAddresses(addresses: Array<string>, options: any) {}
+  addGapLimitAddresses(addresses: string[], options: any) {}
 
   isAddressUsed(address: string, options: any) {
     return false
@@ -886,10 +904,14 @@ export class CurrencyEngine {
   async saveTx(edgeTransaction: EdgeTransaction) {
     // add the transaction to disk and fire off callback (alert in GUI)
     this.addTransaction(edgeTransaction.currencyCode, edgeTransaction)
-    this.log(
-      'executing back in saveTx and this.transactionsChangedArray is: ',
-      this.transactionsChangedArray
+    this.transactionsChangedArray.forEach(tx =>
+      this.log.warn(
+        `executing back in saveTx and this.transactionsChangedArray is: ${cleanTxLogs(
+          tx
+        )}`
+      )
     )
+
     if (this.transactionsChangedArray.length > 0) {
       this.currencyEngineCallbacks.onTransactionsChanged(
         this.transactionsChangedArray
